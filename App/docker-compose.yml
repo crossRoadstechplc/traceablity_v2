@@ -1,0 +1,25 @@
+# Local Postgres fallback when Supabase .env is not yet available.
+# Start: docker compose up -d
+# Then: copy .env.example to .env (defaults match this compose)
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: ankuaru-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ankuaru_sim
+    ports:
+      - "5432:5432"
+    volumes:
+      - ankuaru_pg:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ankuaru_pg:

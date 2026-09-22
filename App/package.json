@@ -1,0 +1,31 @@
+{
+  "name": "ankuaru",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @ankuaru/api --filter @ankuaru/web dev",
+    "dev:api": "pnpm --filter @ankuaru/api dev",
+    "dev:web": "pnpm --filter @ankuaru/web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "seed": "pnpm --filter @ankuaru/seed seed",
+    "db:seed": "pnpm exec tsx scripts/seed-db.ts",
+    "lint": "pnpm -r lint"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "prisma": "^6.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.1.0"
+  }
+}

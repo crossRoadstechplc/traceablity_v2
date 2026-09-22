@@ -1,0 +1,990 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+  schemas   = ["public", "integrity"]
+}
+
+// ─── Shared enums (Module 00) ───────────────────────────────────────────────
+
+enum SourceChannel {
+  web
+  mobile_online
+  mobile_offline_sync
+  api
+  retrospective
+
+  @@schema("public")
+}
+
+enum AuthorityTag {
+  LEGAL_REQUIREMENT
+  OFFICIAL_TECHNICAL_STANDARD
+  INDUSTRY_BENCHMARK
+  ANKUARU_CONTROL_RULE
+
+  @@schema("public")
+}
+
+enum FactConfidence {
+  DECLARED
+  COUNTERPARTY_CONFIRMED
+  AUTHORITY_VERIFIED
+
+  @@schema("public")
+}
+
+enum EvidenceLifecycle {
+  UPLOADED
+  SYSTEM_VALIDATED
+  VERIFIED
+  EXPIRED
+  SUPERSEDED
+  REVOKED
+
+  @@schema("public")
+}
+
+enum ComplianceStatus {
+  READY
+  INCOMPLETE
+  EXCEPTION
+  REQUIRES_EXTERNAL_VERIFICATION
+  NOT_APPLICABLE
+
+  @@schema("public")
+}
+
+enum InterventionLevel {
+  BLOCK
+  WARN
+  FLAG
+
+  @@schema("public")
+}
+
+enum IssueLifecycle {
+  NORMAL
+  ANOMALY_WARNING
+  INVESTIGATION
+  CONFIRMED_EXCEPTION
+  RESOLVED
+
+  @@schema("public")
+}
+
+enum ActorType {
+  farmer
+  collector
+  akrabi
+  washing_station
+  mill
+  exporter
+  transporter
+  driver
+  importer
+  regulator
+  verifier
+  warehouse_operator
+  facility_operator
+  platform_admin
+
+  @@schema("public")
+}
+
+enum CapacityCode {
+  Farmer
+  Collector
+  Aggregator
+  Exporter
+  Importer
+  Transporter
+  Driver
+  FacilityOperator
+  WarehouseOperator
+  Regulator
+  Verifier
+  PlatformAdmin
+
+  @@schema("public")
+}
+
+enum ActorStatus {
+  active
+  inactive
+
+  @@schema("public")
+}
+
+enum LotStatus {
+  active
+  inactive
+  fully_consumed
+  exported
+  destroyed
+  other_terminal
+
+  @@schema("public")
+}
+
+enum CoffeeState {
+  cherry
+  wet_parchment
+  dry_parchment
+  dried_cherry
+  green_natural
+  green_washed
+  semi_washed
+  supply
+  export
+  by_product
+  domestic_consumption
+
+  @@schema("public")
+}
+
+enum ProcessingRoute {
+  washed
+  natural
+  unknown_at_origin
+  semi_washed
+
+  @@schema("public")
+}
+
+enum MovementState {
+  pending
+  in_transit
+  received_clean
+  received_discrepant
+  receipt_overdue
+  exception
+  quarantined
+
+  @@schema("public")
+}
+
+enum TerminalReason {
+  fob_export
+  domestic_disposition
+  destroyed
+
+  @@schema("public")
+}
+
+enum CredentialStatus {
+  Active
+  Expired
+  Revoked
+  Incomplete
+
+  @@schema("public")
+}
+
+enum EvidenceClass {
+  self_assessment
+  laboratory
+  official_authority
+
+  @@schema("public")
+}
+
+enum FactCategory {
+  Recorded
+  Derived
+  Assessment
+  Inference
+
+  @@schema("public")
+}
+
+enum TransactionChannel {
+  primary_transaction_center
+  direct_linkage
+  ecx
+  other
+
+  @@schema("public")
+}
+
+// ─── Module 00: Canonical Event ─────────────────────────────────────────────
+
+model Event {
+  id                 String        @id @default(uuid()) @db.Uuid
+  eventId            String        @unique @map("event_id") @db.Uuid
+  eventType          String        @map("event_type")
+  schemaVersion      String        @default("1.0") @map("schema_version")
+  actorId            String?       @map("actor_id") @db.Uuid
+  actingCapacity     String?       @map("acting_capacity")
+  userId             String?       @map("user_id") @db.Uuid
+  deviceId           String?       @map("device_id")
+  sessionId          String?       @map("session_id")
+  affectedObjectIds  String[]      @default([]) @map("affected_object_ids") @db.Uuid
+  eventTimeActual    DateTime      @map("event_time_actual")
+  eventTimeRecorded  DateTime      @map("event_time_recorded")
+  serverCommitTime   DateTime      @default(now()) @map("server_commit_time")
+  sourceChannel      SourceChannel @default(web) @map("source_channel")
+  locationFacilityId String?       @map("location_facility_id") @db.Uuid
+  locationLat        Float?        @map("location_lat")
+  locationLng        Float?        @map("location_lng")
+  retrospectiveFlag  Boolean       @default(false) @map("retrospective_flag")
+  payload            Json
+  integrityHash      String        @map("integrity_hash")
+  correctsEventId    String?       @map("corrects_event_id") @db.Uuid
+  sequence           BigInt        @default(autoincrement())
+
+  @@index([eventType])
+  @@index([actorId])
+  @@index([serverCommitTime])
+  @@map("events")
+  @@schema("public")
+}
+
+// ─── Module 01: Identity ────────────────────────────────────────────────────
+
+model User {
+  id               String   @id @default(uuid()) @db.Uuid
+  displayName      String   @map("display_name")
+  email            String?  @unique
+  status           String   @default("active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  revokedAt        DateTime? @map("revoked_at")
+
+  memberships      ActorMembership[]
+  delegationsGiven Delegation[] @relation("DelegationGrantor")
+  delegationsRecv  Delegation[] @relation("DelegationGrantee")
+
+  @@map("users")
+  @@schema("public")
+}
+
+model Actor {
+  id                String      @id @default(uuid()) @db.Uuid
+  actorType         ActorType   @map("actor_type")
+  displayName       String      @map("display_name")
+  legalIdentityRef  String      @unique @map("legal_identity_ref")
+  status            ActorStatus @default(active)
+  sponsorActorId    String?     @map("sponsor_actor_id") @db.Uuid
+  metadata          Json        @default("{}")
+  createdAt         DateTime    @default(now()) @map("created_at")
+
+  sponsor           Actor?      @relation("SponsorTree", fields: [sponsorActorId], references: [id])
+  sponsored         Actor[]     @relation("SponsorTree")
+  capacities        ActorCapacity[]
+  memberships       ActorMembership[]
+  credentials       Credential[]
+  ownedLots         Lot[]       @relation("LotOwner")
+  custodianLots     Lot[]       @relation("LotCustodian")
+  farms             Farm[]
+
+  @@index([sponsorActorId])
+  @@index([actorType])
+  @@map("actors")
+  @@schema("public")
+}
+
+model ActorCapacity {
+  id           String       @id @default(uuid()) @db.Uuid
+  actorId      String       @map("actor_id") @db.Uuid
+  capacity     CapacityCode
+  grantedAt    DateTime     @default(now()) @map("granted_at")
+  revokedAt    DateTime?    @map("revoked_at")
+
+  actor        Actor        @relation(fields: [actorId], references: [id])
+
+  @@unique([actorId, capacity])
+  @@map("actor_capacities")
+  @@schema("public")
+}
+
+model ActorMembership {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  actorId   String   @map("actor_id") @db.Uuid
+  isPrimary Boolean  @default(false) @map("is_primary")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User     @relation(fields: [userId], references: [id])
+  actor     Actor    @relation(fields: [actorId], references: [id])
+
+  @@unique([userId, actorId])
+  @@map("actor_memberships")
+  @@schema("public")
+}
+
+model Credential {
+  id          String           @id @default(uuid()) @db.Uuid
+  actorId     String           @map("actor_id") @db.Uuid
+  kind        String
+  issuer      String?
+  scope       Json             @default("{}")
+  criteria    Json             @default("{}")
+  validFrom   DateTime         @map("valid_from")
+  validTo     DateTime?        @map("valid_to")
+  status      CredentialStatus @default(Active)
+  evidenceId  String?          @map("evidence_id") @db.Uuid
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  actor       Actor            @relation(fields: [actorId], references: [id])
+
+  @@index([actorId, kind])
+  @@map("credentials")
+  @@schema("public")
+}
+
+model Delegation {
+  id           String    @id @default(uuid()) @db.Uuid
+  actorId      String    @map("actor_id") @db.Uuid
+  grantorUserId String   @map("grantor_user_id") @db.Uuid
+  granteeUserId String   @map("grantee_user_id") @db.Uuid
+  scope        Json      @default("{}")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  revokedAt    DateTime? @map("revoked_at")
+
+  grantor      User      @relation("DelegationGrantor", fields: [grantorUserId], references: [id])
+  grantee      User      @relation("DelegationGrantee", fields: [granteeUserId], references: [id])
+
+  @@map("delegations")
+  @@schema("public")
+}
+
+model CredentialRequirement {
+  id           String   @id @default(uuid()) @db.Uuid
+  capacity     CapacityCode
+  regionCode   String?  @map("region_code")
+  criteria     Json
+  authorityTag AuthorityTag @map("authority_tag")
+  sourceRef    String   @map("source_ref")
+  active       Boolean  @default(true)
+
+  @@map("credential_requirements")
+  @@schema("public")
+}
+
+// ─── Module 02: Coffee Ledger ───────────────────────────────────────────────
+
+model Lot {
+  id                   String          @id @default(uuid()) @db.Uuid
+  displayCode          String          @unique @map("display_code")
+  commodity            String          @default("coffee")
+  processingState      CoffeeState     @map("processing_state")
+  processingRoute      ProcessingRoute @map("processing_route")
+  status               LotStatus       @default(active)
+  canonicalMassKg      Decimal         @map("canonical_mass_kg") @db.Decimal(18, 6)
+  originalUnit         String?         @map("original_unit")
+  originalQuantity     Decimal?        @map("original_quantity") @db.Decimal(18, 6)
+  conversionBasis      String?         @map("conversion_basis")
+  ownerActorId         String          @map("owner_actor_id") @db.Uuid
+  custodianActorId     String          @map("custodian_actor_id") @db.Uuid
+  locationId           String?         @map("location_id")
+  originLocationId     String?         @map("origin_location_id")
+  cropYear             String?         @map("crop_year")
+  cropYearComposition  Json            @default("{}") @map("crop_year_composition")
+  originStatus         String?         @map("origin_status")
+  originFarmUnitId     String?         @map("origin_farm_unit_id") @db.Uuid
+  createdByActorId     String?         @map("created_by_actor_id") @db.Uuid
+  createdEventId       String          @map("created_event_id") @db.Uuid
+  provenance           Json            @default("{}")
+  inactiveEventId      String?         @map("inactive_event_id") @db.Uuid
+  inTransit            Boolean         @default(false) @map("in_transit")
+  availableKg          Decimal         @map("available_kg") @db.Decimal(18, 6)
+  moisturePct          Decimal?        @map("moisture_pct") @db.Decimal(5, 2)
+  transactionChannel   TransactionChannel? @map("transaction_channel")
+  createdAt            DateTime        @default(now()) @map("created_at")
+
+  owner                Actor           @relation("LotOwner", fields: [ownerActorId], references: [id])
+  custodian            Actor           @relation("LotCustodian", fields: [custodianActorId], references: [id])
+  parentEdges          LineageEdge[]   @relation("ChildLot")
+  childEdges           LineageEdge[]   @relation("ParentLot")
+  movements            Movement[]
+
+  @@index([custodianActorId, status])
+  @@index([ownerActorId])
+  @@map("lots")
+  @@schema("public")
+}
+
+model LineageEdge {
+  id             String  @id @default(uuid()) @db.Uuid
+  parentLotId    String  @map("parent_lot_id") @db.Uuid
+  childLotId     String  @map("child_lot_id") @db.Uuid
+  contributionKg Decimal @map("contribution_kg") @db.Decimal(18, 6)
+  proportion     Decimal @db.Decimal(18, 9)
+  eventId        String  @map("event_id") @db.Uuid
+
+  parent         Lot     @relation("ParentLot", fields: [parentLotId], references: [id])
+  child          Lot     @relation("ChildLot", fields: [childLotId], references: [id])
+
+  @@unique([parentLotId, childLotId])
+  @@index([childLotId])
+  @@map("lineage_edges")
+  @@schema("public")
+}
+
+// ─── Module 03: Movement & Custody ──────────────────────────────────────────
+
+model Movement {
+  id                    String        @id @default(uuid()) @db.Uuid
+  lotId                 String        @map("lot_id") @db.Uuid
+  fromActorId           String        @map("from_actor_id") @db.Uuid
+  toActorId             String        @map("to_actor_id") @db.Uuid
+  senderDeclaredKg      Decimal       @map("sender_declared_kg") @db.Decimal(18, 6)
+  receiverDeclaredKg    Decimal?      @map("receiver_declared_kg") @db.Decimal(18, 6)
+  destinationLocationId String?       @map("destination_location_id")
+  state                 MovementState @default(pending)
+  dispatchEventId       String?       @map("dispatch_event_id") @db.Uuid
+  receiptEventId        String?       @map("receipt_event_id") @db.Uuid
+  expectedReceiptBy     DateTime?     @map("expected_receipt_by")
+  vehicleId             String?       @map("vehicle_id") @db.Uuid
+  driverId              String?       @map("driver_id") @db.Uuid
+  contractId            String?       @map("contract_id") @db.Uuid
+  createdAt             DateTime      @default(now()) @map("created_at")
+
+  lot                   Lot           @relation(fields: [lotId], references: [id])
+  shinto                ShintoPass?
+  discrepancy           Discrepancy?
+
+  @@index([toActorId, state])
+  @@index([lotId])
+  @@map("movements")
+  @@schema("public")
+}
+
+model Discrepancy {
+  id          String   @id @default(uuid()) @db.Uuid
+  movementId  String   @unique @map("movement_id") @db.Uuid
+  senderKg    Decimal  @map("sender_kg") @db.Decimal(18, 6)
+  receiverKg  Decimal  @map("receiver_kg") @db.Decimal(18, 6)
+  deltaKg     Decimal  @map("delta_kg") @db.Decimal(18, 6)
+  status      String   @default("open")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  movement    Movement @relation(fields: [movementId], references: [id])
+
+  @@map("discrepancies")
+  @@schema("public")
+}
+
+model Vehicle {
+  id           String   @id @default(uuid()) @db.Uuid
+  plateNumber  String   @unique @map("plate_number")
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("vehicles")
+  @@schema("public")
+}
+
+model Driver {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorId      String?  @map("actor_id") @db.Uuid
+  displayName  String   @map("display_name")
+  credentialId String?  @map("credential_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("drivers")
+  @@schema("public")
+}
+
+model ShintoPass {
+  id              String   @id @default(uuid()) @db.Uuid
+  movementId      String   @unique @map("movement_id") @db.Uuid
+  weightKg        Decimal  @map("weight_kg") @db.Decimal(18, 6)
+  volume          Decimal? @db.Decimal(18, 6)
+  grade           String
+  lotDisplayCode  String   @map("lot_display_code")
+  sealStatusOrigin String  @map("seal_status_origin")
+  sealVerifiedAt  DateTime? @map("seal_verified_at")
+  netCargoKg      Decimal? @map("net_cargo_kg") @db.Decimal(18, 6)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  movement        Movement @relation(fields: [movementId], references: [id])
+
+  @@map("shinto_passes")
+  @@schema("public")
+}
+
+model Contract {
+  id                 String   @id @default(uuid()) @db.Uuid
+  supplierActorId    String   @map("supplier_actor_id") @db.Uuid
+  exporterActorId    String   @map("exporter_actor_id") @db.Uuid
+  coffeeType         String   @map("coffee_type")
+  quantityKg         Decimal  @map("quantity_kg") @db.Decimal(18, 6)
+  grade              String
+  priceEtbPerKg      Decimal  @map("price_etb_per_kg") @db.Decimal(18, 4)
+  executionPeriod    String   @map("execution_period")
+  paymentTerms       String   @map("payment_terms")
+  deliverySite       String   @map("delivery_site")
+  transportCostAlloc String   @map("transport_cost_alloc")
+  registrationRef    String   @map("registration_ref")
+  channel            TransactionChannel @default(direct_linkage)
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  @@map("contracts")
+  @@schema("public")
+}
+
+model PriceBand {
+  id        String   @id @default(uuid()) @db.Uuid
+  asOfDate  DateTime @map("as_of_date") @db.Date
+  maxEtb    Decimal  @map("max_etb") @db.Decimal(18, 4)
+  minEtb    Decimal  @map("min_etb") @db.Decimal(18, 4)
+  premiumPct Decimal @default(5) @map("premium_pct") @db.Decimal(5, 2)
+
+  @@unique([asOfDate])
+  @@map("price_bands")
+  @@schema("public")
+}
+
+// ─── Module 04: Processing / Facilities ─────────────────────────────────────
+
+model Facility {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorId      String   @unique @map("actor_id") @db.Uuid
+  capabilities String[] @default([])
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("facilities")
+  @@schema("public")
+}
+
+model ByProduct {
+  id             String      @id @default(uuid()) @db.Uuid
+  sourceEventId  String      @map("source_event_id") @db.Uuid
+  kind           String
+  massKg         Decimal     @map("mass_kg") @db.Decimal(18, 6)
+  disposition    String?
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  @@map("by_products")
+  @@schema("public")
+}
+
+// ─── Module 05: Inventory ───────────────────────────────────────────────────
+
+model Stocktake {
+  id              String   @id @default(uuid()) @db.Uuid
+  facilityActorId String   @map("facility_actor_id") @db.Uuid
+  coffeeState     CoffeeState @map("coffee_state")
+  theoreticalKg   Decimal  @map("theoretical_kg") @db.Decimal(18, 6)
+  physicalKg      Decimal  @map("physical_kg") @db.Decimal(18, 6)
+  varianceKg      Decimal  @map("variance_kg") @db.Decimal(18, 6)
+  observerUserId  String   @map("observer_user_id") @db.Uuid
+  explanation     String?
+  countedAt       DateTime @map("counted_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("stocktakes")
+  @@schema("public")
+}
+
+// ─── Module 06: Farm & Geospatial ───────────────────────────────────────────
+
+model Farm {
+  id           String   @id @default(uuid()) @db.Uuid
+  ownerActorId String   @map("owner_actor_id") @db.Uuid
+  displayName  String   @map("display_name")
+  pointLat     Float?   @map("point_lat")
+  pointLng     Float?   @map("point_lng")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  owner        Actor    @relation(fields: [ownerActorId], references: [id])
+  units        FarmUnit[]
+
+  @@index([ownerActorId])
+  @@map("farms")
+  @@schema("public")
+}
+
+model FarmUnit {
+  id           String   @id @default(uuid()) @db.Uuid
+  farmId       String   @map("farm_id") @db.Uuid
+  displayName  String   @map("display_name")
+  polygonPending Boolean @default(true) @map("polygon_pending")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  farm         Farm     @relation(fields: [farmId], references: [id])
+  geometries   GeometryVersion[]
+
+  @@index([farmId])
+  @@map("farm_units")
+  @@schema("public")
+}
+
+model GeometryVersion {
+  id               String   @id @default(uuid()) @db.Uuid
+  farmUnitId       String   @map("farm_unit_id") @db.Uuid
+  version          Int
+  geojson          Json?
+  captureSource    String?  @map("capture_source")
+  captureMethod    String?  @map("capture_method")
+  verificationStatus String @default("pending") @map("verification_status")
+  anomalyFlags     String[] @default([]) @map("anomaly_flags")
+  usedInCompliance Boolean  @default(false) @map("used_in_compliance")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  farmUnit         FarmUnit @relation(fields: [farmUnitId], references: [id])
+  overlays         GeometryOverlay[]
+
+  @@unique([farmUnitId, version])
+  @@map("geometry_versions")
+  @@schema("public")
+}
+
+model GeometryOverlay {
+  id                 String   @id @default(uuid()) @db.Uuid
+  geometryVersionId  String   @map("geometry_version_id") @db.Uuid
+  overlayType        String   @map("overlay_type")
+  payload            Json
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  geometryVersion    GeometryVersion @relation(fields: [geometryVersionId], references: [id])
+
+  @@map("geometry_overlays")
+  @@schema("public")
+}
+
+// ─── Module 07: Evidence ────────────────────────────────────────────────────
+
+model EvidenceItem {
+  id              String            @id @default(uuid()) @db.Uuid
+  attachedType    String            @map("attached_type")
+  attachedId      String            @map("attached_id") @db.Uuid
+  evidenceClass   EvidenceClass     @map("evidence_class")
+  documentType    String            @map("document_type")
+  factSupported   String            @map("fact_supported")
+  sourceIssuer    String?           @map("source_issuer")
+  uploaderUserId  String            @map("uploader_user_id") @db.Uuid
+  storagePath     String?           @map("storage_path")
+  status          EvidenceLifecycle @default(UPLOADED)
+  validFrom       DateTime?         @map("valid_from")
+  validTo         DateTime?         @map("valid_to")
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  verifications   VerificationEvent[]
+  revocations     RevocationEvent[]
+
+  @@index([attachedType, attachedId])
+  @@map("evidence_items")
+  @@schema("public")
+}
+
+model VerificationEvent {
+  id             String   @id @default(uuid()) @db.Uuid
+  evidenceId     String   @map("evidence_id") @db.Uuid
+  verifierUserId String   @map("verifier_user_id") @db.Uuid
+  authority      String
+  outcome        String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  evidence       EvidenceItem @relation(fields: [evidenceId], references: [id])
+
+  @@map("verification_events")
+  @@schema("public")
+}
+
+model RevocationEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  evidenceId    String   @map("evidence_id") @db.Uuid
+  effectiveDate DateTime @map("effective_date")
+  reason        String
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  evidence      EvidenceItem @relation(fields: [evidenceId], references: [id])
+
+  @@map("revocation_events")
+  @@schema("public")
+}
+
+// ─── Module 08: Compliance ──────────────────────────────────────────────────
+
+model Framework {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  owner       String
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  versions    FrameworkVersion[]
+
+  @@map("frameworks")
+  @@schema("public")
+}
+
+model FrameworkVersion {
+  id            String   @id @default(uuid()) @db.Uuid
+  frameworkId   String   @map("framework_id") @db.Uuid
+  version       String
+  effectiveFrom DateTime @map("effective_from")
+  effectiveTo   DateTime? @map("effective_to")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  framework     Framework @relation(fields: [frameworkId], references: [id])
+  requirements  Requirement[]
+  assessments   ComplianceAssessment[]
+
+  @@unique([frameworkId, version])
+  @@map("framework_versions")
+  @@schema("public")
+}
+
+model Requirement {
+  id                String   @id @default(uuid()) @db.Uuid
+  frameworkVersionId String  @map("framework_version_id") @db.Uuid
+  code              String
+  citation          String
+  applicability     Json     @default("{}")
+  validationLogic   Json     @default("{}")
+  authority         String?
+
+  frameworkVersion  FrameworkVersion @relation(fields: [frameworkVersionId], references: [id])
+
+  @@unique([frameworkVersionId, code])
+  @@map("requirements")
+  @@schema("public")
+}
+
+model ComplianceAssessment {
+  id                 String   @id @default(uuid()) @db.Uuid
+  lotId              String   @map("lot_id") @db.Uuid
+  frameworkVersionId String   @map("framework_version_id") @db.Uuid
+  results            Json
+  assessedAt         DateTime @default(now()) @map("assessed_at")
+  eventTimeBasis     DateTime @map("event_time_basis")
+
+  frameworkVersion   FrameworkVersion @relation(fields: [frameworkVersionId], references: [id])
+
+  @@index([lotId])
+  @@map("compliance_assessments")
+  @@schema("public")
+}
+
+model Submission {
+  id                 String   @id @default(uuid()) @db.Uuid
+  assessmentId       String?  @map("assessment_id") @db.Uuid
+  frameworkVersionId String   @map("framework_version_id") @db.Uuid
+  payloadSnapshot    Json     @map("payload_snapshot")
+  status             String   @default("READY")
+  submitterUserId    String   @map("submitter_user_id") @db.Uuid
+  recipient          String?
+  acknowledgement    String?
+  rejectionReason    String?  @map("rejection_reason")
+  frozenAt           DateTime @default(now()) @map("frozen_at")
+  superseded         Boolean  @default(false)
+
+  @@map("submissions")
+  @@schema("public")
+}
+
+model SchemeVolumeClaim {
+  id         String   @id @default(uuid()) @db.Uuid
+  lotId      String   @map("lot_id") @db.Uuid
+  scheme     String
+  claimedKg  Decimal  @map("claimed_kg") @db.Decimal(18, 6)
+  allowance  Boolean  @default(false)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([lotId])
+  @@map("scheme_volume_claims")
+  @@schema("public")
+}
+
+// ─── Module 09: Issues & Obligations ────────────────────────────────────────
+
+model Issue {
+  id               String         @id @default(uuid()) @db.Uuid
+  lifecycle        IssueLifecycle @default(ANOMALY_WARNING)
+  intervention     InterventionLevel
+  authorityTag     AuthorityTag?  @map("authority_tag")
+  sourceRef        String?        @map("source_ref")
+  subjectType      String         @map("subject_type")
+  subjectId        String         @map("subject_id") @db.Uuid
+  summary          String
+  disposition      String?
+  createdAt        DateTime       @default(now()) @map("created_at")
+  resolvedAt       DateTime?      @map("resolved_at")
+
+  @@index([subjectType, subjectId])
+  @@map("issues")
+  @@schema("public")
+}
+
+model Obligation {
+  id                 String    @id @default(uuid()) @db.Uuid
+  kind               String
+  accountableActorId String    @map("accountable_actor_id") @db.Uuid
+  subjectType        String    @map("subject_type")
+  subjectId          String    @map("subject_id") @db.Uuid
+  deadline           DateTime?
+  status             String    @default("open")
+  payload            Json      @default("{}")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  escalatedAt        DateTime? @map("escalated_at")
+
+  handovers          ObligationHandover[]
+
+  @@index([accountableActorId, status])
+  @@map("obligations")
+  @@schema("public")
+}
+
+model ObligationHandover {
+  id              String   @id @default(uuid()) @db.Uuid
+  obligationId    String   @map("obligation_id") @db.Uuid
+  fromActorId     String   @map("from_actor_id") @db.Uuid
+  toActorId       String   @map("to_actor_id") @db.Uuid
+  eventId         String   @map("event_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  obligation      Obligation @relation(fields: [obligationId], references: [id])
+
+  @@map("obligation_handovers")
+  @@schema("public")
+}
+
+model BlockRuleRegistry {
+  id           String   @id @default(uuid()) @db.Uuid
+  code         String   @unique
+  authorityTag AuthorityTag @map("authority_tag")
+  sourceRef    String   @map("source_ref")
+  scope        String
+  owner        String
+  approvalRef  String   @map("approval_ref")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("block_rule_registry")
+  @@schema("public")
+}
+
+// ─── Module 10: Reporting & Audit ───────────────────────────────────────────
+
+model Report {
+  id            String   @id @default(uuid()) @db.Uuid
+  lotId         String?  @map("lot_id") @db.Uuid
+  payload       Json
+  fingerprint   String
+  version       Int      @default(1)
+  superseded    Boolean  @default(false)
+  supersedesId  String?  @map("supersedes_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("reports")
+  @@schema("public")
+}
+
+model AuditPackage {
+  id              String   @id @default(uuid()) @db.Uuid
+  reportId        String   @map("report_id") @db.Uuid
+  established     Json     @default("[]")
+  missing         Json     @default("[]")
+  pending         Json     @default("[]")
+  exceptions      Json     @default("[]")
+  notApplicable   Json     @default("[]") @map("not_applicable")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("audit_packages")
+  @@schema("public")
+}
+
+model RegulatorAccessLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  regulatorUserId String @map("regulator_user_id") @db.Uuid
+  dataAccessed  String   @map("data_accessed")
+  purpose       String
+  action        String
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("regulator_access_logs")
+  @@schema("public")
+}
+
+model RecoveryException {
+  id          String   @id @default(uuid()) @db.Uuid
+  summary     String
+  details     Json     @default("{}")
+  status      String   @default("open")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("recovery_exceptions")
+  @@schema("public")
+}
+
+// ─── Module 11: Notifications ───────────────────────────────────────────────
+
+model Notification {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  category      String
+  title         String
+  body          String
+  triggerRef    String?  @map("trigger_ref")
+  readAt        DateTime? @map("read_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([userId, readAt])
+  @@map("notifications")
+  @@schema("public")
+}
+
+model DeliveryPreference {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  category  String
+  channel   String
+  enabled   Boolean  @default(true)
+
+  @@unique([userId, category, channel])
+  @@map("delivery_preferences")
+  @@schema("public")
+}
+
+// ─── Module 15: AI Governance ───────────────────────────────────────────────
+
+model ModelRegistry {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String   @unique
+  purpose         String
+  owner           String
+  trainingData    String   @map("training_data")
+  features        Json     @default("[]")
+  version         String
+  limitations     String
+  deploymentScope String   @map("deployment_scope")
+  monitoringPlan  String   @map("monitoring_plan")
+  enabled         Boolean  @default(false)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("model_registry")
+  @@schema("public")
+}
+
+// ─── Display code sequence ──────────────────────────────────────────────────
+
+model DisplaySequence {
+  id      String @id @default("lot")
+  nextVal Int    @default(1) @map("next_val")
+
+  @@map("display_sequences")
+  @@schema("public")
+}
+
+// ─── Integrity schema (Module 10) ───────────────────────────────────────────
+
+model Checkpoint {
+  id        String   @id @default(uuid()) @db.Uuid
+  sequence  BigInt
+  eventId   String   @map("event_id") @db.Uuid
+  chainHash String   @map("chain_hash")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([sequence])
+  @@index([eventId])
+  @@map("checkpoints")
+  @@schema("integrity")
+}

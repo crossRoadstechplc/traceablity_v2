@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.next/
+.turbo/
+.env
+.env.local
+*.log
+data/evidence/**
+!data/evidence/.gitkeep
+data/reports/**
+!data/reports/.gitkeep
+coverage/
+.DS_Store
+*.tsbuildinfo
+prisma/*.db
+prisma/*.db-journal

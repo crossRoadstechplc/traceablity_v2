@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Institutional coffee logistics — cool paper, deep olive, no purple SaaS */
+    --background: 90 12% 96%;
+    --foreground: 150 22% 12%;
+    --card: 90 20% 99%;
+    --card-foreground: 150 22% 12%;
+    --primary: 148 28% 22%;
+    --primary-foreground: 90 20% 98%;
+    --secondary: 90 10% 92%;
+    --secondary-foreground: 150 18% 18%;
+    --muted: 90 8% 92%;
+    --muted-foreground: 150 8% 40%;
+    --accent: 148 18% 90%;
+    --accent-foreground: 148 28% 18%;
+    --destructive: 0 62% 38%;
+    --destructive-foreground: 0 0% 98%;
+    --warn: 28 80% 38%;
+    --warn-foreground: 28 90% 96%;
+    --border: 90 8% 84%;
+    --input: 90 8% 84%;
+    --ring: 148 28% 28%;
+    --radius: 0.4rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 10% -10%, hsl(148 20% 88% / 0.55), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 0%, hsl(90 15% 90% / 0.4), transparent);
+    min-height: 100vh;
+  }
+}

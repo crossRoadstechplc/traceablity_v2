@@ -1,0 +1,4 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE SCHEMA IF NOT EXISTS integrity;
+GRANT ALL ON SCHEMA public TO postgres;
+GRANT ALL ON SCHEMA integrity TO postgres;
