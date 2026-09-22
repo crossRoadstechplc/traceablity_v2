@@ -74,9 +74,25 @@ App/
   data/evidence          local file evidence store
 ```
 
+## Deploy API (Render)
+
+Root Directory must be **`App`**.
+
+| Setting | Value |
+|--------|--------|
+| **Root Directory** | `App` |
+| **Install Command** | `corepack enable && pnpm install` |
+| **Build Command** | `pnpm run build:api` |
+| **Start Command** | `pnpm run start:api` |
+| **Node** | `22` (env `NODE_VERSION=22`) |
+
+Do **not** use bare `npm run build` with npm-only install — this is a **pnpm** workspace. `prisma` is a production dependency so it is available after install.
+
+Env vars: `DATABASE_URL`, `DIRECT_URL`, `WEB_ORIGIN` (Vercel URL), `JWT_SECRET`.
+
 ## Deploy (Vercel)
 
-Next.js lives in `apps/web`, not the monorepo root. Use **one** of these:
+Use build command **`pnpm run build:web`** (not `build`, which is for the API on Render).
 
 ### Recommended — Root Directory = `App/apps/web`
 

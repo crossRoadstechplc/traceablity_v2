@@ -1,0 +1,25 @@
+# Render — Root Directory must be `App`
+services:
+  - type: web
+    name: ankuaru-api
+    runtime: node
+    plan: free
+    rootDir: App
+    buildCommand: corepack enable && pnpm install && pnpm run build:api
+    startCommand: pnpm run start:api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: EVIDENCE_DIR
+        value: ./data/evidence
+      - key: REPORTS_DIR
+        value: ./data/reports

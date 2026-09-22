@@ -3,12 +3,19 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "pnpm --parallel --filter @ankuaru/api --filter @ankuaru/web dev",
     "dev:api": "pnpm --filter @ankuaru/api dev",
     "dev:web": "pnpm --filter @ankuaru/web dev",
-    "build": "pnpm exec prisma generate && pnpm --filter @ankuaru/web build",
+    "build": "pnpm run build:api",
+    "build:api": "prisma generate && pnpm --filter @ankuaru/api build",
+    "build:web": "prisma generate && pnpm --filter @ankuaru/web build",
     "build:all": "pnpm -r build",
+    "start": "pnpm run start:api",
+    "start:api": "pnpm --filter @ankuaru/api start",
     "test": "pnpm -r test",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -19,17 +26,17 @@
     "db:seed": "pnpm exec tsx scripts/seed-db.ts",
     "lint": "pnpm -r lint"
   },
-  "devDependencies": {
-    "@types/node": "^22.10.0",
-    "prisma": "^6.1.0",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
-  },
   "dependencies": {
     "@prisma/client": "^6.1.0",
     "next": "^15.1.0",
+    "prisma": "^6.1.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }
