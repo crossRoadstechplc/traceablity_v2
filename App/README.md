@@ -74,6 +74,32 @@ App/
   data/evidence          local file evidence store
 ```
 
+## Deploy (Vercel)
+
+Next.js lives in `apps/web`, not the monorepo root. Use **one** of these:
+
+### Recommended — Root Directory = `App/apps/web`
+
+In Vercel → Project → Settings → General:
+
+| Setting | Value |
+|--------|--------|
+| **Root Directory** | `App/apps/web` |
+| **Framework** | Next.js |
+| **Install Command** | `cd ../.. && pnpm install` |
+| **Build Command** | `cd ../.. && pnpm exec prisma generate && pnpm --filter @ankuaru/web build` |
+
+Env vars: `NEXT_PUBLIC_API_URL` pointing at your hosted API (or leave local only for now).
+
+### Alternative — Root Directory = `App`
+
+`App/package.json` lists `next` so Vercel can detect it. Build uses `vercel.json`:
+
+- Install: `pnpm install`
+- Build: `pnpm exec prisma generate && pnpm --filter @ankuaru/web build`
+
+**Note:** the Fastify API (`apps/api`) is not a Vercel serverless app as-is — deploy web to Vercel and API separately (Railway/Fly/Render), or keep API local.
+
 ## Notes
 
 - Supabase Auth is **not** used — Module 01 User/Actor/Capacity via role picker.

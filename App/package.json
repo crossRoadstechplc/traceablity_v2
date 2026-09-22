@@ -7,7 +7,8 @@
     "dev": "pnpm --parallel --filter @ankuaru/api --filter @ankuaru/web dev",
     "dev:api": "pnpm --filter @ankuaru/api dev",
     "dev:web": "pnpm --filter @ankuaru/web dev",
-    "build": "pnpm -r build",
+    "build": "pnpm exec prisma generate && pnpm --filter @ankuaru/web build",
+    "build:all": "pnpm -r build",
     "test": "pnpm -r test",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -26,6 +27,9 @@
     "vitest": "^2.1.8"
   },
   "dependencies": {
-    "@prisma/client": "^6.1.0"
+    "@prisma/client": "^6.1.0",
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   }
 }
