@@ -5,8 +5,8 @@ services:
     runtime: node
     plan: free
     rootDir: App
-    buildCommand: corepack enable && pnpm install --no-frozen-lockfile && pnpm exec prisma generate && pnpm --filter @ankuaru/api build
-    startCommand: pnpm --filter @ankuaru/api start
+    buildCommand: npm install && npx prisma generate && npm run build -w @ankuaru/api
+    startCommand: npm run start -w @ankuaru/api
     healthCheckPath: /health
     envVars:
       - key: NODE_VERSION

@@ -19,11 +19,11 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@ankuaru/engine": "workspace:*",
-    "@ankuaru/schema": "workspace:*"
+    "@ankuaru/engine": "*",
+    "@ankuaru/schema": "*",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

@@ -11,9 +11,9 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@ankuaru/engine": "workspace:*",
-    "@ankuaru/schema": "workspace:*",
-    "@ankuaru/seed": "workspace:*",
+    "@ankuaru/engine": "*",
+    "@ankuaru/schema": "*",
+    "@ankuaru/seed": "*",
     "@fastify/cors": "^10.0.1",
     "@prisma/client": "^6.1.0",
     "@types/node": "^22.10.0",

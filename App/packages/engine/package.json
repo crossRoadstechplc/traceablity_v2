@@ -18,7 +18,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@ankuaru/schema": "workspace:*"
+    "@ankuaru/schema": "*"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

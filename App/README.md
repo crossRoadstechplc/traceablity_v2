@@ -5,7 +5,7 @@ Implements Rulebooks CORE + 00–16 (engine invariants, seed world, role workspa
 
 ## Stack
 
-- **Monorepo:** pnpm + TypeScript
+- **Monorepo:** npm workspaces + TypeScript
 - **Engine:** `@ankuaru/engine` (append-only events, projections in memory)
 - **API:** Fastify `@ankuaru/api` → `http://localhost:3001`
 - **Web:** Next.js `@ankuaru/web` → `http://localhost:3000`
@@ -39,17 +39,17 @@ docker compose up -d
 ### 2. Install & migrate
 
 ```bash
-pnpm install
-pnpm db:generate
-pnpm db:migrate
-# or: pnpm db:push
+npm install
+npm run db:generate
+npm run db:migrate
+# or: npm run db:push
 ```
 
 ### 3. Run
 
 ```bash
-pnpm --filter @ankuaru/api dev
-pnpm --filter @ankuaru/web dev
+npm run dev:api
+npm run dev:web
 ```
 
 Open http://localhost:3000 → **Seed world** → pick Farmer / Collector / Aggregator / Exporter.
@@ -57,8 +57,8 @@ Open http://localhost:3000 → **Seed world** → pick Farmer / Collector / Aggr
 ### 4. Tests
 
 ```bash
-pnpm --filter @ankuaru/engine test
-pnpm --filter @ankuaru/seed seed
+npm run test -w @ankuaru/engine
+npm run seed -w @ankuaru/seed
 ```
 
 ## Layout
@@ -81,18 +81,18 @@ Root Directory must be **`App`**.
 | Setting | Value |
 |--------|--------|
 | **Root Directory** | `App` |
-| **Install Command** | `corepack enable && pnpm install` |
-| **Build Command** | `pnpm run build:api` |
-| **Start Command** | `pnpm run start:api` |
+| **Install Command** | `npm install` |
+| **Build Command** | `npm run build:api` |
+| **Start Command** | `npm run start:api` |
 | **Node** | `22` (env `NODE_VERSION=22`) |
 
-Do **not** use bare `npm run build` with npm-only install — this is a **pnpm** workspace. `prisma` is a production dependency so it is available after install.
+`prisma` is a production dependency so it is available after install.
 
 Env vars: `DATABASE_URL`, `DIRECT_URL`, `WEB_ORIGIN` (Vercel URL), `JWT_SECRET`.
 
 ## Deploy (Vercel)
 
-Use build command **`pnpm run build:web`** (not `build`, which is for the API on Render).
+Use build command **`npm run build:web`** (not `build`, which is for the API on Render).
 
 ### Recommended — Root Directory = `App/apps/web`
 
@@ -102,8 +102,8 @@ In Vercel → Project → Settings → General:
 |--------|--------|
 | **Root Directory** | `App/apps/web` |
 | **Framework** | Next.js |
-| **Install Command** | `cd ../.. && pnpm install` |
-| **Build Command** | `cd ../.. && pnpm exec prisma generate && pnpm --filter @ankuaru/web build` |
+| **Install Command** | `cd ../.. && npm install` |
+| **Build Command** | `cd ../.. && npm run build:web` |
 
 Env vars: `NEXT_PUBLIC_API_URL` pointing at your hosted API (or leave local only for now).
 
@@ -111,8 +111,8 @@ Env vars: `NEXT_PUBLIC_API_URL` pointing at your hosted API (or leave local only
 
 `App/package.json` lists `next` so Vercel can detect it. Build uses `vercel.json`:
 
-- Install: `pnpm install`
-- Build: `pnpm exec prisma generate && pnpm --filter @ankuaru/web build`
+- Install: `npm install`
+- Build: `npm run build:web`
 
 **Note:** the Fastify API (`apps/api`) is not a Vercel serverless app as-is — deploy web to Vercel and API separately (Railway/Fly/Render), or keep API local.
 
