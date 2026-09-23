@@ -17,15 +17,27 @@ type WorldState = {
 
 const g = globalThis as typeof globalThis & { __ankuaruWorld?: WorldState };
 
+const WORLD_KEY = "__ankuaruWorld_v4";
+
 function world(): WorldState {
-  if (!g.__ankuaruWorld) {
-    g.__ankuaruWorld = {
+  const store = g as unknown as Record<string, WorldState | undefined>;
+  let state = store[WORLD_KEY];
+  // Recreate if HMR left an old engine instance without newer methods
+  if (
+    !state ||
+    typeof state.engine.lineageTrace !== "function" ||
+    typeof state.engine.networkProfile !== "function" ||
+    typeof state.engine.allowedIntakeTargets !== "function"
+  ) {
+    state = {
       engine: createEngine(),
       seedMeta: null,
       sessions: new Map(),
     };
+    store[WORLD_KEY] = state;
+    delete (g as { __ankuaruWorld?: WorldState }).__ankuaruWorld;
   }
-  return g.__ankuaruWorld;
+  return state;
 }
 
 function getSession(headers: Headers): Session {
@@ -248,16 +260,33 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
       const s = getSession(req.headers);
       const children = engine.networkTree(s.actorId);
       return json({
-        self: engine.getActors().find((a) => a.actorId === s.actorId),
+        self: {
+          ...engine.getActors().find((a) => a.actorId === s.actorId),
+          displayLabel: engine.displayNameFor(s.actorId, s.actorId),
+          counts: engine.networkCounts(s.actorId),
+        },
         children: children.map((c) => ({
           ...c,
           displayLabel: engine.displayNameFor(s.actorId, c.actorId),
+          counts: engine.networkCounts(c.actorId),
           children: engine.networkTree(c.actorId).map((gc) => ({
             ...gc,
             displayLabel: engine.displayNameFor(s.actorId, gc.actorId),
+            counts: engine.networkCounts(gc.actorId),
           })),
         })),
       });
+    }
+
+    if (path.startsWith("v1/network/") && method === "GET") {
+      const s = getSession(req.headers);
+      const subjectId = path.slice("v1/network/".length);
+      if (!subjectId || subjectId.includes("/")) {
+        return json({ error: "Not found" }, 404);
+      }
+      const profile = engine.networkProfile(s.actorId, subjectId);
+      if (!profile) return json({ error: "Actor not found or not in your network" }, 404);
+      return json(profile);
     }
 
     if (path === "v1/inspector/lots" && method === "GET") {
@@ -266,16 +295,9 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
     }
 
     if (path === "v1/inspector/lineage" && method === "GET") {
-      getSession(req.headers);
+      const s = getSession(req.headers);
       const lotId = url.searchParams.get("lotId") ?? "";
-      return json({
-        origins: engine.traceBackward(lotId),
-        forward: engine.forwardOneHop(lotId),
-        edges: engine.getLineage().filter(
-          (e) => e.parentLotId === lotId || e.childLotId === lotId,
-        ),
-        lot: engine.getLots().find((l) => l.lotId === lotId),
-      });
+      return json(engine.lineageTrace(lotId, s.actorId));
     }
 
     if (path === "v1/inspector/integrity" && method === "GET") {
@@ -285,7 +307,54 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
 
     if (path === "v1/send-targets" && method === "GET") {
       const s = getSession(req.headers);
-      return json({ targets: engine.allowedSendTargets(s.actorId) });
+      return json({
+        targets: engine.allowedSendTargets(s.actorId).map((t) => ({
+          actorId: t.actorId,
+          displayName: engine.displayNameFor(s.actorId, t.actorId),
+          actorType: t.actorType,
+        })),
+      });
+    }
+
+    if (path === "v1/intake-targets" && method === "GET") {
+      const s = getSession(req.headers);
+      return json({
+        targets: engine.allowedIntakeTargets(s.actorId).map((t) => ({
+          actorId: t.actorId,
+          displayName: engine.displayNameFor(s.actorId, t.actorId),
+          actorType: t.actorType,
+        })),
+      });
+    }
+
+    if (path === "v1/inspector/activity" && method === "GET") {
+      const s = getSession(req.headers);
+      const events = engine.visibleEvents(s.actorId).slice(-100).reverse();
+      return json({
+        events: events.map((e) => ({
+          eventId: e.eventId,
+          eventType: e.eventType,
+          eventTime: e.eventTimeActual || e.serverCommitTime,
+          actorId: e.actorId,
+          actorLabel: e.actorId
+            ? engine.displayNameFor(s.actorId, e.actorId)
+            : "—",
+          affectedObjectIds: e.affectedObjectIds,
+        })),
+      });
+    }
+
+    if (path === "v1/lot-detail" && method === "GET") {
+      const s = getSession(req.headers);
+      const lotId = url.searchParams.get("lotId") ?? "";
+      const lot = engine.getLots().find((l) => l.lotId === lotId);
+      if (!lot) return json({ error: "Lot not found" }, 404);
+      return json({
+        lot,
+        ownerLabel: engine.displayNameFor(s.actorId, lot.ownerActorId),
+        custodianLabel: engine.displayNameFor(s.actorId, lot.custodianActorId),
+        priorSupplier: engine.priorSupplierLabel(lotId, s.actorId),
+      });
     }
 
     if (path.startsWith("v1/commands/") && method === "POST") {

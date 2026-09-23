@@ -170,16 +170,34 @@ async function buildServer() {
       const s = getSession(req);
       const children = engine.networkTree(s.actorId);
       return {
-        self: engine.getActors().find((a) => a.actorId === s.actorId),
+        self: {
+          ...engine.getActors().find((a) => a.actorId === s.actorId),
+          displayLabel: engine.displayNameFor(s.actorId, s.actorId),
+          counts: engine.networkCounts(s.actorId),
+        },
         children: children.map((c) => ({
           ...c,
           displayLabel: engine.displayNameFor(s.actorId, c.actorId),
+          counts: engine.networkCounts(c.actorId),
           children: engine.networkTree(c.actorId).map((gc) => ({
             ...gc,
             displayLabel: engine.displayNameFor(s.actorId, gc.actorId),
+            counts: engine.networkCounts(gc.actorId),
           })),
         })),
       };
+    } catch (err) {
+      const m = mapError(err);
+      return reply.code(m.statusCode).send(m.body);
+    }
+  });
+
+  app.get<{ Params: { actorId: string } }>("/v1/network/:actorId", async (req, reply) => {
+    try {
+      const s = getSession(req);
+      const profile = engine.networkProfile(s.actorId, req.params.actorId);
+      if (!profile) return reply.code(404).send({ error: "Actor not found or not in your network" });
+      return profile;
     } catch (err) {
       const m = mapError(err);
       return reply.code(m.statusCode).send(m.body);
@@ -198,16 +216,8 @@ async function buildServer() {
 
   app.get<{ Querystring: { lotId: string } }>("/v1/inspector/lineage", async (req, reply) => {
     try {
-      getSession(req);
-      const lotId = req.query.lotId;
-      return {
-        origins: engine.traceBackward(lotId),
-        forward: engine.forwardOneHop(lotId),
-        edges: engine.getLineage().filter(
-          (e) => e.parentLotId === lotId || e.childLotId === lotId,
-        ),
-        lot: engine.getLots().find((l) => l.lotId === lotId),
-      };
+      const s = getSession(req);
+      return engine.lineageTrace(req.query.lotId, s.actorId);
     } catch (err) {
       const m = mapError(err);
       return reply.code(m.statusCode).send(m.body);
@@ -227,7 +237,29 @@ async function buildServer() {
   app.get("/v1/send-targets", async (req, reply) => {
     try {
       const s = getSession(req);
-      return { targets: engine.allowedSendTargets(s.actorId) };
+      return {
+        targets: engine.allowedSendTargets(s.actorId).map((t) => ({
+          actorId: t.actorId,
+          displayName: engine.displayNameFor(s.actorId, t.actorId),
+          actorType: t.actorType,
+        })),
+      };
+    } catch (err) {
+      const m = mapError(err);
+      return reply.code(m.statusCode).send(m.body);
+    }
+  });
+
+  app.get("/v1/intake-targets", async (req, reply) => {
+    try {
+      const s = getSession(req);
+      return {
+        targets: engine.allowedIntakeTargets(s.actorId).map((t) => ({
+          actorId: t.actorId,
+          displayName: engine.displayNameFor(s.actorId, t.actorId),
+          actorType: t.actorType,
+        })),
+      };
     } catch (err) {
       const m = mapError(err);
       return reply.code(m.statusCode).send(m.body);

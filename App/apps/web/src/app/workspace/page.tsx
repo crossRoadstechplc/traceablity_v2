@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn, formatKg, formatState } from "@/lib/utils";
+import { LoadingOverlay } from "@/components/LoadingOverlay";
 
 type Lot = {
   lotId: string;
@@ -77,6 +78,14 @@ function WorkspaceInner() {
   const [form, setForm] = useState<FormKind>(null);
   const [error, setError] = useState<string | null>(null);
   const [targets, setTargets] = useState<Array<{ actorId: string; displayName: string }>>([]);
+  const [intakeTargets, setIntakeTargets] = useState<
+    Array<{ actorId: string; displayName: string }>
+  >([]);
+  const [lotDetail, setLotDetail] = useState<{
+    ownerLabel: string;
+    custodianLabel: string;
+    priorSupplier: string;
+  } | null>(null);
   const [massKg, setMassKg] = useState("100");
   const [recvKg, setRecvKg] = useState("");
   const [toActorId, setToActorId] = useState("");
@@ -85,8 +94,17 @@ function WorkspaceInner() {
   const [lossKg, setLossKg] = useState("10");
   const [outputState, setOutputState] = useState("dry_parchment");
   const [onboardName, setOnboardName] = useState("");
+  const [facilityName, setFacilityName] = useState("");
+  const [facilityType, setFacilityType] = useState<"washing_station" | "mill">("washing_station");
+  const [onboardMeta, setOnboardMeta] = useState<Record<string, string>>({
+    region: "South Ethiopia",
+    zone: "Gedeo",
+    woreda: "Yirgacheffe",
+  });
   const [supplierId, setSupplierId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("Updating ledger…");
+
 
   const sid = session?.sessionId;
 
@@ -100,21 +118,42 @@ function WorkspaceInner() {
       "/v1/send-targets",
       { sessionId: sid },
     );
+    const intake = await api<{ targets: Array<{ actorId: string; displayName: string }> }>(
+      "/v1/intake-targets",
+      { sessionId: sid },
+    ).catch(() => ({ targets: [] as Array<{ actorId: string; displayName: string }> }));
     setLots(inv.lots);
     setPending(pend.movements);
     setTargets(tg.targets);
+    setIntakeTargets(intake.targets);
     if (selected) {
-      setSelected(inv.lots.find((l) => l.lotId === selected.lotId) ?? null);
+      const next = inv.lots.find((l) => l.lotId === selected.lotId) ?? null;
+      setSelected(next);
     }
+  }, [sid, selected?.lotId]);
+
+  useEffect(() => {
+    if (!sid || !selected) {
+      setLotDetail(null);
+      return;
+    }
+    api<{
+      ownerLabel: string;
+      custodianLabel: string;
+      priorSupplier: string;
+    }>(`/v1/lot-detail?lotId=${selected.lotId}`, { sessionId: sid })
+      .then(setLotDetail)
+      .catch(() => setLotDetail(null));
   }, [sid, selected?.lotId]);
 
   useEffect(() => {
     void refresh().catch((e) => setError(String(e.message ?? e)));
   }, [sid]);
 
-  async function run(path: string, body: unknown) {
+  async function run(path: string, body: unknown, label = "Updating the ledger…") {
     if (!sid) return;
     setError(null);
+    setBusyLabel(label);
     setBusy(true);
     try {
       await api(path, { method: "POST", sessionId: sid, body: JSON.stringify(body) });
@@ -135,6 +174,9 @@ function WorkspaceInner() {
     <div className="space-y-5 animate-fade-in">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            {role} dashboard
+          </p>
           <h1 className="font-display text-2xl font-semibold">{role} workspace</h1>
           <p className="text-sm text-muted-foreground">
             Inventory you hold, pending receipts, and lot actions.
@@ -277,7 +319,7 @@ function WorkspaceInner() {
                 <Field label="Mass (kg)">
                   <Input value={massKg} onChange={(e) => setMassKg(e.target.value)} />
                 </Field>
-                <Button disabled={busy} onClick={() => void run("/v1/commands/origin-lot", { massKg: Number(massKg) })}>
+                <Button disabled={busy} onClick={() => void run("/v1/commands/origin-lot", { massKg: Number(massKg) }, "Creating origin lot…")}>
                   Create origin
                 </Button>
               </FormStack>
@@ -285,19 +327,35 @@ function WorkspaceInner() {
 
             {form === "intake" && (
               <FormStack>
-                <Field label="Supplier actor id">
-                  <Input value={supplierId} onChange={(e) => setSupplierId(e.target.value)} placeholder="UUID of sponsored supplier" />
+                <Field label="Supplier">
+                  <Select value={supplierId} onValueChange={setSupplierId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select sponsored supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {intakeTargets.map((t) => (
+                        <SelectItem key={t.actorId} value={t.actorId}>
+                          {t.displayName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Field>
+                {intakeTargets.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    No sponsored suppliers yet — onboard parties in My Network first.
+                  </p>
+                )}
                 <Field label="Mass (kg)">
                   <Input value={massKg} onChange={(e) => setMassKg(e.target.value)} />
                 </Field>
                 <Button
-                  disabled={busy}
+                  disabled={busy || !supplierId}
                   onClick={() =>
                     void run("/v1/commands/intake-lot", {
                       supplierActorId: supplierId,
                       massKg: Number(massKg),
-                    })
+                    }, "Recording intake…")
                   }
                 >
                   Record intake
@@ -310,20 +368,107 @@ function WorkspaceInner() {
                 <Field label="Display name">
                   <Input value={onboardName} onChange={(e) => setOnboardName(e.target.value)} />
                 </Field>
+                {(role === "Exporter"
+                  ? [
+                      ["region", "Region"],
+                      ["zone", "Zone"],
+                      ["woreda", "Woreda"],
+                      ["registrationNo", "Registration no."],
+                      ["license", "License"],
+                      ["warehouseLocation", "Warehouse location"],
+                      ["yearsOperating", "Years operating"],
+                    ]
+                  : role === "Aggregator"
+                    ? [
+                        ["region", "Region"],
+                        ["zone", "Zone"],
+                        ["woreda", "Woreda"],
+                        ["kebele", "Kebele"],
+                        ["phone", "Phone"],
+                        ["coverageArea", "Coverage area"],
+                        ["yearsCollecting", "Years collecting"],
+                      ]
+                    : [
+                        ["region", "Region"],
+                        ["zone", "Zone"],
+                        ["woreda", "Woreda"],
+                        ["kebele", "Kebele"],
+                        ["phone", "Phone"],
+                        ["farmSizeHa", "Farm size (ha)"],
+                        ["variety", "Variety"],
+                        ["yearsFarming", "Years farming"],
+                      ]
+                ).map(([key, label]) => (
+                  <Field key={key} label={label}>
+                    <Input
+                      value={onboardMeta[key] ?? ""}
+                      onChange={(e) =>
+                        setOnboardMeta((m) => ({ ...m, [key]: e.target.value }))
+                      }
+                    />
+                  </Field>
+                ))}
+                {role === "Exporter" && (
+                  <>
+                    <Field label="Processing site name">
+                      <Input
+                        value={facilityName}
+                        onChange={(e) => setFacilityName(e.target.value)}
+                        placeholder="e.g. Yirgacheffe Washing Station"
+                      />
+                    </Field>
+                    <Field label="Processing site type">
+                      <Select
+                        value={facilityType}
+                        onValueChange={(v) =>
+                          setFacilityType(v as "washing_station" | "mill")
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="washing_station">Washing station</SelectItem>
+                          <SelectItem value="mill">Mill</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  </>
+                )}
                 <Button
                   disabled={busy || !onboardName}
                   onClick={() => {
                     const actorType =
                       role === "Exporter" ? "akrabi" : role === "Aggregator" ? "collector" : "farmer";
+                    const meta: Record<string, string> = {
+                      ...Object.fromEntries(
+                        Object.entries(onboardMeta).filter(([, v]) => v.trim() !== ""),
+                      ),
+                      userOnboarded: "true",
+                    };
+                    if (role === "Exporter" && !meta.registrationNo) {
+                      meta.registrationNo = `AK-${Date.now().toString().slice(-4)}`;
+                    }
                     void run("/v1/commands/onboard", {
                       actorType,
                       displayName: onboardName,
-                      legalIdentityRef: `USER-${Date.now()}`,
+                      legalIdentityRef:
+                        role === "Exporter"
+                          ? `REG-AK-${Date.now().toString().slice(-6)}`
+                          : `USER-${Date.now()}`,
+                      metadata: meta,
                       facility:
                         role === "Exporter"
-                          ? { capabilities: ["wet_milling", "washed_processing"] }
+                          ? {
+                              capabilities:
+                                facilityType === "mill"
+                                  ? ["dry_milling", "natural_processing"]
+                                  : ["wet_milling", "washed_processing"],
+                              displayName: facilityName || undefined,
+                              facilityType,
+                            }
                           : undefined,
-                    });
+                    }, "Onboarding party…");
                   }}
                 >
                   Create party
@@ -334,9 +479,14 @@ function WorkspaceInner() {
             {selected && !form && (
               <div className="space-y-4">
                 <dl className="grid grid-cols-2 gap-3 text-sm">
+                  <Stat label="Code" value={selected.displayCode} />
                   <Stat label="Form" value={formatState(selected.processingState)} />
                   <Stat label="Mass" value={formatKg(selected.canonicalMassKg)} />
+                  <Stat label="Route" value={formatState(selected.processingRoute)} />
                   <Stat label="Crop year" value={selected.cropYear ?? "Composition"} />
+                  <Stat label="Owner" value={lotDetail?.ownerLabel ?? "…"} />
+                  <Stat label="Custodian" value={lotDetail?.custodianLabel ?? "…"} />
+                  <Stat label="Prior supplier" value={lotDetail?.priorSupplier ?? "…"} />
                   <Stat label="Origin" value={formatState(selected.originStatus ?? "—")} />
                 </dl>
                 {selected.inTransit ? (
@@ -570,6 +720,7 @@ function WorkspaceInner() {
           </CardContent>
         </Card>
       </div>
+      <LoadingOverlay open={busy} title="Working" detail={busyLabel} />
     </div>
   );
 }

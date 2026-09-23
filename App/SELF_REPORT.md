@@ -24,6 +24,7 @@
 - 10 Reporting: fingerprint stable — tested; checkpoints schema ready.
 - 11 Notifications: action-only — tested.
 - 12 UX: Workspace/Network/Inspector + exclusive lineage accordions — implemented in web.
+  - **Contract:** `.cursor/rules/ankuaru-core-ux.mdc` — Network profiles (§12 metadata + deliveries), lineage seed cards, onboard metadata must not be stripped.
 - 13 Field: dual attribution helper + USSD adapter endpoint — implemented.
 - 14 APIs: `/v1` same auth path + openapi stub — implemented.
 - 15 AI: write ban at engine — tested.

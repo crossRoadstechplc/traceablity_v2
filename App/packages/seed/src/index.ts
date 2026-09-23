@@ -6,14 +6,70 @@ import {
 } from "@ankuaru/engine";
 
 const SITES = [
-  { name: "Yirgacheffe", route: "washed" as const, facility: "washing_station" as const },
-  { name: "Bensa", route: "natural" as const, facility: "mill" as const },
-  { name: "Yirgalem", route: "washed" as const, facility: "washing_station" as const },
-  { name: "Kochere", route: "washed" as const, facility: "washing_station" as const },
-  { name: "Hambela", route: "natural" as const, facility: "mill" as const },
-  { name: "Aleta Wondo", route: "washed" as const, facility: "washing_station" as const },
-  { name: "Dilla", route: "washed" as const, facility: "washing_station" as const },
-  { name: "Shakiso", route: "natural" as const, facility: "mill" as const },
+  {
+    name: "Yirgacheffe",
+    route: "washed" as const,
+    facility: "washing_station" as const,
+    region: "South Ethiopia",
+    zone: "Gedeo",
+    woreda: "Yirgacheffe",
+  },
+  {
+    name: "Bensa",
+    route: "natural" as const,
+    facility: "mill" as const,
+    region: "Sidama",
+    zone: "Bensa",
+    woreda: "Bensa",
+  },
+  {
+    name: "Yirgalem",
+    route: "washed" as const,
+    facility: "washing_station" as const,
+    region: "Sidama",
+    zone: "Dale",
+    woreda: "Yirgalem",
+  },
+  {
+    name: "Kochere",
+    route: "washed" as const,
+    facility: "washing_station" as const,
+    region: "South Ethiopia",
+    zone: "Gedeo",
+    woreda: "Kochere",
+  },
+  {
+    name: "Hambela",
+    route: "natural" as const,
+    facility: "mill" as const,
+    region: "Oromia",
+    zone: "Guji",
+    woreda: "Hambela Wamena",
+  },
+  {
+    name: "Aleta Wondo",
+    route: "washed" as const,
+    facility: "washing_station" as const,
+    region: "Sidama",
+    zone: "Aleta Wondo",
+    woreda: "Aleta Wondo",
+  },
+  {
+    name: "Dilla",
+    route: "washed" as const,
+    facility: "washing_station" as const,
+    region: "South Ethiopia",
+    zone: "Gedeo",
+    woreda: "Dilla Zuria",
+  },
+  {
+    name: "Shakiso",
+    route: "natural" as const,
+    facility: "mill" as const,
+    region: "Oromia",
+    zone: "Guji",
+    woreda: "Shakiso",
+  },
 ];
 
 function sess(actorId: string, capacity: Session["capacity"]): Session {
@@ -128,7 +184,16 @@ export function seedWorld(existing?: LedgerEngine): SeedResult {
     metadata: {
       demoSelectable: "true",
       companyName: "Ankuaru Coffee PLC",
+      address: "Bole, Addis Ababa",
+      exportLicense: "EXP-LIC-2201",
+      nbeRegistration: "NBE-EXP-2201",
+      contactPerson: "Dawit Tefera",
+      contactPhone: "+251911000001",
       warehouse: "Addis Ababa Warehouse",
+      yearsOperating: "12",
+      region: "Addis Ababa",
+      zone: "Bole",
+      woreda: "Bole",
     },
     capacities: ["Exporter"],
   });
@@ -147,12 +212,19 @@ export function seedWorld(existing?: LedgerEngine): SeedResult {
       actorId: aggregatorId,
       actorType: "akrabi",
       displayName: `${site.name} Aggregator`,
-      legalIdentityRef: `AGG-${si + 1}`,
+      legalIdentityRef: `REG-AK-${1000 + si}`,
       status: "active",
       sponsorActorId: exporterId,
       metadata: {
         demoSelectable: si < 3 ? "true" : "false",
-        region: site.name,
+        region: site.region,
+        zone: site.zone,
+        woreda: site.woreda,
+        registrationNo: `AK-${1000 + si}`,
+        license: `LIC-${3000 + si}`,
+        warehouseLocation: `${site.name} town, ${site.woreda}`,
+        yearsOperating: String(3 + (si % 5)),
+        phone: `+251911${String(100000 + si).slice(-6)}`,
       },
       capacities: ["Aggregator", "FacilityOperator"],
     });
@@ -163,11 +235,19 @@ export function seedWorld(existing?: LedgerEngine): SeedResult {
     eng.seedActor({
       actorId: facilityId,
       actorType: site.facility,
-      displayName: `${site.name} ${site.facility}`,
-      legalIdentityRef: `FAC-${si + 1}`,
+      displayName: `${site.name} ${site.facility === "mill" ? "Mill" : "Washing Station"}`,
+      legalIdentityRef: `REG-FAC-${1000 + si}`,
       status: "active",
       sponsorActorId: aggregatorId,
-      metadata: {},
+      metadata: {
+        region: site.region,
+        zone: site.zone,
+        woreda: site.woreda,
+        kebele: `${site.name} 01`,
+        registrationNo: `FAC-${1000 + si}`,
+        capacityKgPerDay: site.facility === "mill" ? "8000" : "12000",
+        operator: `${site.name} Ops`,
+      },
       capacities: ["FacilityOperator"],
     });
     eng.setFacility(facilityId, [
@@ -178,12 +258,27 @@ export function seedWorld(existing?: LedgerEngine): SeedResult {
       actorId: collectorId,
       actorType: "collector",
       displayName: `${site.name} Collector`,
-      legalIdentityRef: `COL-${si + 1}`,
+      legalIdentityRef: `REG-COL-${1000 + si}`,
       status: "active",
       sponsorActorId: aggregatorId,
-      metadata: { demoSelectable: si < 3 ? "true" : "false" },
+      metadata: {
+        demoSelectable: si < 3 ? "true" : "false",
+        region: site.region,
+        zone: site.zone,
+        woreda: site.woreda,
+        kebele: `${site.name} market`,
+        phone: `+251912${String(200000 + si).slice(-6)}`,
+        coverageArea: `${site.woreda} catchment`,
+        yearsCollecting: String(2 + (si % 4)),
+        userOnboarded: si === 0 ? "true" : "false",
+      },
       capacities: ["Collector"],
     });
+    if (si === 0) {
+      // Match demo profile: named collector under first aggregator
+      const c = eng.getActors().find((a) => a.actorId === collectorId);
+      if (c) c.displayName = "Dawit Tamiru";
+    }
 
     const farmerIds: string[] = [];
     for (let f = 0; f < 6; f++) {
@@ -197,7 +292,14 @@ export function seedWorld(existing?: LedgerEngine): SeedResult {
         sponsorActorId: collectorId,
         metadata: {
           demoSelectable: si < 3 && f === 0 ? "true" : "false",
-          region: site.name,
+          region: site.region,
+          zone: site.zone,
+          woreda: site.woreda,
+          kebele: `${site.name} kebele ${f + 1}`,
+          phone: `+251913${String(300000 + si * 10 + f).slice(-6)}`,
+          farmSizeHa: String(0.5 + f * 0.25),
+          variety: site.route === "natural" ? "Heirloom natural" : "Heirloom washed",
+          yearsFarming: String(4 + f),
           lat: String(6 + si * 0.1),
           lng: String(38 + f * 0.01),
         },

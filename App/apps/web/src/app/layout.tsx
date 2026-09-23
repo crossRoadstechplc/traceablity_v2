@@ -17,6 +17,14 @@ const display = Source_Serif_4({
 export const metadata: Metadata = {
   title: "Ankuaru Simulator",
   description: "Event-sourced coffee lot ledger — Ethiopian supply network",
+  applicationName: "Ankuaru",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/icon.png", type: "image/png", sizes: "512x512" },
+    ],
+    apple: [{ url: "/icon.png" }],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -6,17 +6,17 @@ import {
   Bean,
   ChevronRight,
   Loader2,
-  RefreshCw,
   Sprout,
   Truck,
   Warehouse,
 } from "lucide-react";
 import { api, type SessionInfo } from "@/lib/api";
-import { Button } from "@/components/ui/button";
+import { seedWorld } from "@/lib/seed";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
+import { InlineBusy, LoadingOverlay } from "@/components/LoadingOverlay";
 import { cn } from "@/lib/utils";
 
 type Role = {
@@ -72,50 +72,53 @@ const ROLE_META: Record<
   },
 };
 
-type Step = "boot" | "pick-role" | "pick-actor";
+type Step = "booting" | "pick-role" | "pick-actor";
 
 export default function HomePage() {
   const router = useRouter();
   const [roles, setRoles] = useState<Role[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [seeding, setSeeding] = useState(false);
   const [binding, setBinding] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [step, setStep] = useState<Step>("boot");
+  const [step, setStep] = useState<Step>("booting");
+  const [bootMessage, setBootMessage] = useState("Preparing seed world…");
   const [selectedType, setSelectedType] = useState<string | null>(null);
 
-  async function refresh() {
-    setLoading(true);
-    setError(null);
-    try {
-      const list = await api<Role[]>("/v1/roles");
-      setRoles(list);
-      setStep(list.length ? "pick-role" : "boot");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "API unreachable — start the simulator with npm run dev");
-      setStep("boot");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
-    void refresh();
-  }, []);
-
-  async function seed() {
-    setSeeding(true);
-    setError(null);
-    try {
-      await api("/v1/seed", { method: "POST", body: "{}" });
-      await refresh();
-      setStep("pick-role");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Seed failed");
-    } finally {
-      setSeeding(false);
+    let cancelled = false;
+    async function boot() {
+      setStep("booting");
+      setError(null);
+      try {
+        setBootMessage("Checking for a seeded world…");
+        let list = await api<Role[]>("/v1/roles");
+        if (cancelled) return;
+        if (list.length === 0) {
+          setBootMessage("Seeding eight Ethiopian sites…");
+          await seedWorld();
+          if (cancelled) return;
+          list = await api<Role[]>("/v1/roles");
+        }
+        if (cancelled) return;
+        setRoles(list);
+        setStep(list.length ? "pick-role" : "booting");
+        if (!list.length) {
+          setError("Seed completed but no demo roles appeared.");
+        }
+      } catch (e) {
+        if (cancelled) return;
+        setError(
+          e instanceof Error
+            ? e.message
+            : "API unreachable — start the simulator with npm run dev",
+        );
+        setStep("booting");
+      }
     }
-  }
+    void boot();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function bind(role: Role) {
     const capacity = (CAP_FOR[role.actorType] ?? role.capacities[0]) as string;
@@ -161,7 +164,8 @@ export default function HomePage() {
         </h1>
         <p className="mt-3 max-w-2xl text-muted-foreground">
           One shared event-sourced world. Enter as a User bound to an Actor and Capacity —
-          Farmer → Collector → Aggregator → Exporter.
+          Farmer → Collector → Aggregator → Exporter. Use <strong>Reseed</strong> in the nav
+          anytime to reset the ledger.
         </p>
       </div>
 
@@ -171,10 +175,9 @@ export default function HomePage() {
         </Alert>
       )}
 
-      {/* Progress */}
       <ol className="mb-8 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {[
-          { id: "boot", label: "1 · Prepare world" },
+          { id: "booting", label: "1 · Auto-seed" },
           { id: "pick-role", label: "2 · Choose role" },
           { id: "pick-actor", label: "3 · Enter as actor" },
         ].map((s, i) => (
@@ -186,7 +189,7 @@ export default function HomePage() {
                 step === s.id && "bg-primary text-primary-foreground",
                 step !== s.id &&
                   ((step === "pick-actor" && s.id !== "pick-actor") ||
-                    (step === "pick-role" && s.id === "boot")) &&
+                    (step === "pick-role" && s.id === "booting")) &&
                   "bg-accent text-accent-foreground",
               )}
             >
@@ -196,52 +199,15 @@ export default function HomePage() {
         ))}
       </ol>
 
-      {loading ? (
-        <Card>
-          <CardContent className="flex items-center gap-3 py-10 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            Checking for a seeded world…
-          </CardContent>
-        </Card>
-      ) : step === "boot" || roles.length === 0 ? (
-        <Card className="animate-fade-in overflow-hidden">
-          <CardHeader>
-            <CardTitle>Prepare the seed world</CardTitle>
-            <CardDescription>
-              Boots eight Ethiopian sites, three coffee cycles, and a multi-farm washed blend
-              ready for lineage tracing. No OTP — this is a simulator bind, not a marketing login.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-3">
-            <Button onClick={() => void seed()} disabled={seeding}>
-              {seeding ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Seeding eight sites…
-                </>
-              ) : (
-                "Seed world & continue"
-              )}
-            </Button>
-            <Button variant="outline" onClick={() => void refresh()} disabled={seeding}>
-              <RefreshCw className="h-4 w-4" />
-              Recheck
-            </Button>
-          </CardContent>
-        </Card>
+      {step === "booting" ? (
+        <InlineBusy label={bootMessage} className="py-10" />
       ) : step === "pick-role" ? (
         <div className="animate-fade-in space-y-4">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 className="font-display text-xl font-semibold">Choose your capacity</h2>
-              <p className="text-sm text-muted-foreground">
-                {roles.length} demo actors ready · world already seeded
-              </p>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => void seed()} disabled={seeding}>
-              {seeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Reseed
-            </Button>
+          <div>
+            <h2 className="font-display text-xl font-semibold">Choose your capacity</h2>
+            <p className="text-sm text-muted-foreground">
+              {roles.length} demo actors ready · world auto-seeded
+            </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {playableTypes.map((type) => {
@@ -318,6 +284,21 @@ export default function HomePage() {
             ))}
           </div>
         </div>
+      )}
+      {step === "booting" && (
+        <LoadingOverlay
+          open
+          title="Preparing the ledger"
+          detail={bootMessage}
+        />
+      )}
+
+      {binding && (
+        <LoadingOverlay
+          open
+          title="Entering workspace"
+          detail="Binding your user to actor and capacity…"
+        />
       )}
     </main>
   );

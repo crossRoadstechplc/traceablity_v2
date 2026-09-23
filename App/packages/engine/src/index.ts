@@ -83,6 +83,50 @@ export type LineageEdgeRecord = {
   eventId: string;
 };
 
+export type LineageTraceNode = {
+  lotId: string;
+  displayCode: string;
+  title: string;
+  summary: string;
+  kind: "origin" | "aggregate" | "process" | "split" | "other";
+  massKg: number;
+  processingState: string;
+  processingRoute: string;
+  status: string;
+  cropYear?: string;
+  originStatus?: string;
+  yieldPct?: number;
+  parentLotIds: string[];
+  parentCount: number;
+  ownerLabel: string;
+  custodianLabel: string;
+  locationId?: string;
+  originLocationId?: string;
+  ownerActorId: string;
+  custodianActorId: string;
+  cropYearComposition: Record<string, number>;
+  provenance: Record<string, number>;
+  contributions: Array<{
+    parentLotId: string;
+    contributionKg: number;
+    proportion: number;
+  }>;
+};
+
+function titleCase(s: string): string {
+  return s
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function coffeeStateLabel(state: string): string {
+  if (state === "green_washed") return "Green (washed)";
+  if (state === "green_natural") return "Green (natural)";
+  if (state === "wet_parchment") return "Wet parchment";
+  if (state === "dry_parchment") return "Dry parchment";
+  return titleCase(state);
+}
+
 export type MovementRecord = {
   movementId: string;
   lotId: string;
@@ -538,7 +582,11 @@ export class LedgerEngine {
       sponsorActorId?: string | null;
       metadata?: Record<string, string>;
       capacities?: CapacityCode[];
-      facility?: { capabilities: string[] };
+      facility?: {
+        capabilities: string[];
+        displayName?: string;
+        facilityType?: "washing_station" | "mill";
+      };
     },
   ): ActorRecord {
     this.assertCapacity(session, ["Exporter", "Aggregator", "Collector", "PlatformAdmin"]);
@@ -598,6 +646,33 @@ export class LedgerEngine {
         actorId,
         capabilities: input.facility.capabilities,
       });
+      // CORE: optional child washing_station/mill sponsored by the new aggregator
+      if (input.actorType === "akrabi") {
+        const facType = input.facility.facilityType ?? "washing_station";
+        const facId = randomUUID();
+        const fac: ActorRecord = {
+          actorId: facId,
+          actorType: facType,
+          displayName:
+            input.facility.displayName ??
+            `${input.displayName} ${facType === "mill" ? "Mill" : "Washing Station"}`,
+          legalIdentityRef: `REG-FAC-${Date.now().toString().slice(-6)}`,
+          status: "active",
+          sponsorActorId: actorId,
+          metadata: {
+            region: input.metadata?.region ?? "",
+            zone: input.metadata?.zone ?? "",
+            woreda: input.metadata?.woreda ?? "",
+            userOnboarded: "true",
+          },
+          capacities: ["FacilityOperator"],
+        };
+        this.w.actors.set(facId, fac);
+        this.w.facilities.set(facId, {
+          actorId: facId,
+          capabilities: input.facility.capabilities,
+        });
+      }
     }
     if (
       input.actorType === "washing_station" ||
@@ -793,6 +868,55 @@ export class LedgerEngine {
       if (a.actorType === "exporter") return t.sponsorActorId === a.actorId && t.actorType === "akrabi";
       return false;
     });
+  }
+
+  /** Sponsored suppliers allowed for intake (CORE §2.4). */
+  allowedIntakeTargets(actorId: string): ActorRecord[] {
+    const a = this.w.actors.get(actorId);
+    if (!a) return [];
+    const types = INTAKE_MATRIX[a.actorType] ?? [];
+    return this.networkTree(actorId).filter((t) => types.includes(t.actorType));
+  }
+
+  /** Farm count for lineage header: union of provenance keys on origin lots. */
+  farmCountForLot(lotId: string): number {
+    const origins = this.traceBackward(lotId);
+    const farms = new Set<string>();
+    for (const oid of origins) {
+      const o = this.w.lots.get(oid);
+      if (!o) continue;
+      const keys = Object.keys(o.provenance);
+      if (keys.length === 0) farms.add(oid);
+      else for (const k of keys) farms.add(k);
+    }
+    return farms.size;
+  }
+
+  /** Events related to lots visible to actor (inspector activity). */
+  visibleEvents(actorId: string): EventRecord[] {
+    const lotIds = new Set(this.visibleLots(actorId).map((l) => l.lotId));
+    return this.w.events.filter(
+      (e) =>
+        e.actorId === actorId ||
+        e.affectedObjectIds.some((id) => lotIds.has(id)) ||
+        String(e.payload.farmerActorId ?? "") === actorId,
+    );
+  }
+
+  /** Last completed inbound movement supplier for a lot (workspace detail). */
+  priorSupplierLabel(lotId: string, viewerId: string): string {
+    const inbound = [...this.w.movements.values()]
+      .filter(
+        (m) =>
+          m.lotId === lotId &&
+          m.toActorId === viewerId &&
+          m.state !== "pending" &&
+          m.state !== "receipt_overdue",
+      )
+      .sort((a, b) => a.movementId.localeCompare(b.movementId));
+    const last = inbound[inbound.length - 1];
+    if (!last) return "Harvest origin";
+    return this.displayNameFor(viewerId, last.fromActorId);
   }
 
   send(
@@ -1913,6 +2037,151 @@ export class LedgerEngine {
     return [...this.w.actors.values()].filter((a) => a.sponsorActorId === actorId);
   }
 
+  /** All actors in the sponsored subtree (excluding self). */
+  sponsoredSubtreeIds(rootActorId: string): Set<string> {
+    const ids = new Set<string>();
+    const queue = [rootActorId];
+    while (queue.length) {
+      const id = queue.shift()!;
+      for (const child of this.networkTree(id)) {
+        if (!ids.has(child.actorId)) {
+          ids.add(child.actorId);
+          queue.push(child.actorId);
+        }
+      }
+    }
+    return ids;
+  }
+
+  networkCounts(actorId: string): {
+    collectors: number;
+    farmers: number;
+    processingSites: number;
+    aggregators: number;
+  } {
+    const subtree = this.sponsoredSubtreeIds(actorId);
+    let collectors = 0;
+    let farmers = 0;
+    let processingSites = 0;
+    let aggregators = 0;
+    for (const id of subtree) {
+      const a = this.w.actors.get(id);
+      if (!a) continue;
+      if (a.actorType === "collector") collectors++;
+      else if (a.actorType === "farmer") farmers++;
+      else if (a.actorType === "washing_station" || a.actorType === "mill") processingSites++;
+      else if (a.actorType === "akrabi") aggregators++;
+    }
+    return { collectors, farmers, processingSites, aggregators };
+  }
+
+  /**
+   * Lots that reached `viewerId` via custody movement from `subjectId`
+   * (or from someone in subject's sponsored tree).
+   */
+  actorDeliveriesTo(
+    viewerId: string,
+    subjectId: string,
+  ): Array<{
+    lotId: string;
+    displayCode: string;
+    form: string;
+    weightKg: number;
+    receivedAt: string;
+    movementId: string;
+  }> {
+    const fromSet = new Set(this.sponsoredSubtreeIds(subjectId));
+    fromSet.add(subjectId);
+    const out: Array<{
+      lotId: string;
+      displayCode: string;
+      form: string;
+      weightKg: number;
+      receivedAt: string;
+      movementId: string;
+    }> = [];
+    for (const m of this.w.movements.values()) {
+      if (m.toActorId !== viewerId) continue;
+      if (!fromSet.has(m.fromActorId)) continue;
+      if (m.state === "pending" || m.state === "receipt_overdue") continue;
+      const lot = this.w.lots.get(m.lotId);
+      if (!lot) continue;
+      const receiptEv = m.receiptEventId
+        ? this.w.events.find((e) => e.eventId === m.receiptEventId)
+        : undefined;
+      out.push({
+        lotId: lot.lotId,
+        displayCode: lot.displayCode,
+        form: lot.processingState,
+        weightKg: m.receiverDeclaredKg ?? m.senderDeclaredKg,
+        receivedAt: receiptEv?.eventTimeActual ?? receiptEv?.serverCommitTime ?? "",
+        movementId: m.movementId,
+      });
+    }
+    out.sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
+    return out;
+  }
+
+  networkProfile(viewerId: string, subjectId: string): {
+    actor: ActorRecord;
+    displayLabel: string;
+    relation: string;
+    metadata: Record<string, string>;
+    legalIdentityRef: string;
+    counts: ReturnType<LedgerEngine["networkCounts"]>;
+    networkMembers: Array<{
+      actorId: string;
+      actorType: string;
+      displayLabel: string;
+    }>;
+    deliveries: ReturnType<LedgerEngine["actorDeliveriesTo"]>;
+  } | null {
+    const actor = this.w.actors.get(subjectId);
+    if (!actor) return null;
+    const viewer = this.w.actors.get(viewerId);
+    const inTree =
+      subjectId === viewerId ||
+      this.sponsoredSubtreeIds(viewerId).has(subjectId) ||
+      actor.sponsorActorId === viewerId;
+    if (!inTree && viewer) {
+      // Still allow viewing self profile
+      return null;
+    }
+    const relation =
+      subjectId === viewerId
+        ? "Your profile"
+        : actor.sponsorActorId === viewerId
+          ? "In your sponsored network"
+          : "In your network";
+
+    const typeOrder = (t: string) => {
+      if (t === "collector") return 0;
+      if (t === "washing_station" || t === "mill") return 1;
+      if (t === "farmer") return 2;
+      if (t === "akrabi") return 3;
+      return 9;
+    };
+
+    const networkMembers = this.networkTree(subjectId)
+      .map((c) => ({
+        actorId: c.actorId,
+        actorType: c.actorType,
+        displayLabel: this.displayNameFor(viewerId, c.actorId),
+      }))
+      .sort((a, b) => typeOrder(a.actorType) - typeOrder(b.actorType));
+
+    return {
+      actor,
+      displayLabel: this.displayNameFor(viewerId, subjectId),
+      relation,
+      metadata: { ...actor.metadata },
+      legalIdentityRef: actor.legalIdentityRef,
+      counts: this.networkCounts(subjectId),
+      networkMembers,
+      deliveries: this.actorDeliveriesTo(viewerId, subjectId),
+    };
+  }
+
   displayNameFor(viewerId: string, subjectId: string): string {
     const viewer = this.w.actors.get(viewerId);
     const subject = this.w.actors.get(subjectId);
@@ -2020,6 +2289,153 @@ export class LedgerEngine {
 
   getLineage(): LineageEdgeRecord[] {
     return [...this.w.lineage];
+  }
+
+  /** Full backward ancestry tree for inspector UI (all hops + node cards). */
+  lineageTrace(lotId: string, viewerActorId?: string): {
+    origins: string[];
+    forward: string[];
+    forwardLots: Array<{
+      lotId: string;
+      displayCode: string;
+      form: string;
+      status: string;
+    }>;
+    farmCount: number;
+    lot?: LotRecord;
+    edges: LineageEdgeRecord[];
+    nodes: LineageTraceNode[];
+  } {
+    const allEdges = this.w.lineage;
+    const lotIds = new Set<string>([lotId]);
+    const queue = [lotId];
+    while (queue.length) {
+      const id = queue.shift()!;
+      for (const e of allEdges) {
+        if (e.childLotId === id && !lotIds.has(e.parentLotId)) {
+          lotIds.add(e.parentLotId);
+          queue.push(e.parentLotId);
+        }
+      }
+    }
+    const edges = allEdges.filter(
+      (e) => lotIds.has(e.childLotId) && lotIds.has(e.parentLotId),
+    );
+    const parentsOf = (id: string) => edges.filter((e) => e.childLotId === id);
+
+    const nodes: LineageTraceNode[] = [...lotIds]
+      .map((id) => this.w.lots.get(id))
+      .filter((lot): lot is LotRecord => !!lot)
+      .map((lot) => {
+      const id = lot.lotId;
+      const parents = parentsOf(id);
+      const parentLots = parents
+        .map((e) => this.w.lots.get(e.parentLotId))
+        .filter(Boolean) as LotRecord[];
+      const createEv = this.w.events.find((e) => e.eventId === lot.createdEventId);
+      const owner = this.w.actors.get(lot.ownerActorId);
+      const custodian = this.w.actors.get(lot.custodianActorId);
+      const ownerLabel = viewerActorId
+        ? this.displayNameFor(viewerActorId, lot.ownerActorId)
+        : (owner?.displayName ?? lot.ownerActorId);
+      const custodianLabel = viewerActorId
+        ? this.displayNameFor(viewerActorId, lot.custodianActorId)
+        : (custodian?.displayName ?? lot.custodianActorId);
+
+      const routeLabel = titleCase(lot.processingRoute);
+      const stateLabel = coffeeStateLabel(lot.processingState);
+
+      let kind: LineageTraceNode["kind"] = "other";
+      let title = stateLabel;
+      let summary = `${routeLabel}`;
+      let yieldPct: number | undefined;
+
+      if (parents.length === 0) {
+        kind = "origin";
+        title = ownerLabel;
+        const place =
+          lot.locationId?.replace(/_/g, " ") ||
+          lot.originLocationId?.replace(/_/g, " ") ||
+          owner?.metadata?.region ||
+          owner?.metadata?.site ||
+          owner?.displayName?.split(" ")[0] ||
+          "Parcel";
+        const woreda = owner?.metadata?.woreda;
+        summary = woreda
+          ? `Harvest parcel · ${place}, ${woreda} · ${lot.cropYear ?? "mix"}`
+          : `Harvest parcel · ${place} · ${lot.cropYear ?? "mix"}`;
+      } else if (createEv?.eventType === "process") {
+        kind = "process";
+        title = stateLabel;
+        const inputMass = parentLots.reduce((s, p) => s + p.canonicalMassKg, 0);
+        if (inputMass > 0) {
+          yieldPct = Math.round((lot.canonicalMassKg / inputMass) * 1000) / 10;
+        }
+        summary = `Processed here · yield ${yieldPct?.toFixed(1) ?? "—"}% · ${routeLabel}`;
+      } else if (createEv?.eventType === "aggregate" || parents.length > 1) {
+        kind = "aggregate";
+        title =
+          lot.processingState === "cherry"
+            ? "Aggregated cherry"
+            : `Aggregated ${stateLabel.toLowerCase()}`;
+        summary = `Combined from ${parents.length} harvest lot${parents.length === 1 ? "" : "s"} · ${routeLabel}`;
+      } else if (createEv?.eventType === "disaggregate") {
+        kind = "split";
+        title = stateLabel;
+        summary = `Split from parent lot · ${routeLabel}`;
+      } else {
+        title = stateLabel;
+        summary = `${routeLabel} · ${titleCase(lot.originStatus ?? "recorded")}`;
+      }
+
+      return {
+        lotId: lot.lotId,
+        displayCode: lot.displayCode,
+        title,
+        summary,
+        kind,
+        massKg: lot.canonicalMassKg,
+        processingState: lot.processingState,
+        processingRoute: lot.processingRoute,
+        status: lot.status,
+        cropYear: lot.cropYear,
+        originStatus: lot.originStatus,
+        yieldPct,
+        parentLotIds: parents.map((p) => p.parentLotId),
+        parentCount: parents.length,
+        ownerLabel,
+        custodianLabel,
+        locationId: lot.locationId,
+        originLocationId: lot.originLocationId,
+        ownerActorId: lot.ownerActorId,
+        custodianActorId: lot.custodianActorId,
+        cropYearComposition: lot.cropYearComposition,
+        provenance: lot.provenance,
+        contributions: parents.map((p) => ({
+          parentLotId: p.parentLotId,
+          contributionKg: p.contributionKg,
+          proportion: p.proportion,
+        })),
+      };
+    });
+
+    return {
+      origins: this.traceBackward(lotId),
+      forward: this.forwardOneHop(lotId),
+      forwardLots: this.forwardOneHop(lotId).map((id) => {
+        const l = this.w.lots.get(id);
+        return {
+          lotId: id,
+          displayCode: l?.displayCode ?? id.slice(0, 8),
+          form: l?.processingState ?? "",
+          status: l?.status ?? "",
+        };
+      }),
+      farmCount: this.farmCountForLot(lotId),
+      lot: this.w.lots.get(lotId),
+      edges,
+      nodes,
+    };
   }
 
   getMovements(): MovementRecord[] {
