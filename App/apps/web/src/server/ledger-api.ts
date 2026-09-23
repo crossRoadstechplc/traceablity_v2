@@ -76,7 +76,7 @@ function dbUnavailable(message = "database not configured"): Response {
   return Response.json(
     {
       error: message,
-      hint: "Set DATABASE_URL and DIRECT_URL in Vercel → Project Settings → Environment Variables (Production + Preview), then Redeploy. Local App/.env is not uploaded to Vercel.",
+      hint: "The ledger database is not connected. Please try again later.",
       vercel: process.env.VERCEL === "1",
       hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
       hasDirectUrl: Boolean(process.env.DIRECT_URL),
@@ -96,7 +96,7 @@ async function ensureWorld(): Promise<WorldState> {
   w.hydratePromise = (async () => {
     if (!isDatabaseConfigured()) {
       const err = new Error(
-        "database not configured: set DATABASE_URL and DIRECT_URL in Vercel Project → Settings → Environment Variables (Production), then redeploy",
+        "The ledger database is not connected",
       );
       (err as Error & { statusCode: number }).statusCode = 503;
       throw err;
@@ -130,7 +130,7 @@ async function ensureWorld(): Promise<WorldState> {
 
 async function persistWorld(): Promise<void> {
   if (!isDatabaseConfigured()) {
-    const err = new Error("database not configured: set DATABASE_URL and DIRECT_URL");
+    const err = new Error("The ledger database is not connected");
     (err as Error & { statusCode: number }).statusCode = 503;
     throw err;
   }
@@ -232,7 +232,7 @@ function mapError(err: unknown) {
       statusCode: 503,
       body: {
         error: "database temporarily unreachable",
-        hint: "Supabase connection failed (P1001). Retry in a few seconds; confirm the project is not paused and DIRECT_URL works (`npx tsx scripts/check-db.ts`).",
+        hint: "Please retry in a few seconds.",
       },
     };
   }
@@ -454,8 +454,7 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
     if (path === "v1/seed" && method === "POST") {
       return json(
         {
-          error: "Seed from the UI is disabled",
-          hint: "Run `npm run db:seed` from App/ when you want to reload the demo world.",
+          error: "Reloading the demo world from the app is disabled",
         },
         403,
       );
@@ -469,11 +468,8 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
       if (actors.length === 0) {
         return json(
           {
-            error: all.length === 0 ? "No actors loaded from the database" : "No demo-selectable actors in the loaded world",
-            hint:
-              all.length === 0
-                ? "On Vercel: set DATABASE_URL + DIRECT_URL (same as App/.env), redeploy, then run npm run db:seed against that Supabase project."
-                : "Re-run npm run db:seed so demoSelectable actors exist.",
+            error: "The demo world isn't available yet",
+            hint: "Please try again in a moment.",
             database: isDatabaseConfigured(),
             actorCount: all.length,
             vercel: process.env.VERCEL === "1",
@@ -504,7 +500,7 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
         return json(
           {
             error: "Capacity not on actor",
-            hint: "Actor has no capacities in DB — re-run npm run db:seed",
+            hint: "This actor has no role assigned yet.",
             actorType: actor.actorType,
             capacities: actor.capacities,
           },

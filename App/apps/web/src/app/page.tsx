@@ -150,7 +150,7 @@ export default function HomePage() {
         if (cancelled) return;
         if (!list?.length) {
           setError(
-            "No demo actors in the database. On Vercel set DATABASE_URL + DIRECT_URL, redeploy, then run npm run db:seed.",
+            "The demo world isn't available yet. Please try again in a moment.",
           );
           setStep("pick-role");
           return;
@@ -161,7 +161,7 @@ export default function HomePage() {
         setError(
           e instanceof Error
             ? e.message
-            : "API unreachable — start the simulator with npm run dev",
+            : "The ledger service is unreachable. Please try again in a moment.",
         );
         setStep("pick-role");
       }
@@ -250,8 +250,7 @@ export default function HomePage() {
         </h1>
         <p className="mt-3 max-w-2xl text-muted-foreground">
           One shared event-sourced world. Enter as a User bound to an Actor and Capacity —
-          Farmer → Collector → Aggregator → Exporter → Importer. Seed the database once with{" "}
-          <code className="text-xs">npm run db:seed</code>, then enter any role.
+          Farmer → Collector → Aggregator → Exporter → Importer. Pick a role to enter its workspace.
         </p>
       </div>
 
@@ -260,30 +259,6 @@ export default function HomePage() {
           {error}
         </Alert>
       )}
-
-      <ol className="mb-8 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {[
-          { id: "booting", label: "1 · Load world" },
-          { id: "pick-role", label: "2 · Choose role" },
-          { id: "pick-actor", label: "3 · Enter as actor" },
-        ].map((s, i) => (
-          <li key={s.id} className="flex items-center gap-2">
-            {i > 0 && <ChevronRight className="h-3 w-3" />}
-            <span
-              className={cn(
-                "rounded-full px-2.5 py-1",
-                step === s.id && "bg-primary text-primary-foreground",
-                step !== s.id &&
-                  ((step === "pick-actor" && s.id !== "pick-actor") ||
-                    (step === "pick-role" && s.id === "booting")) &&
-                  "bg-accent text-accent-foreground",
-              )}
-            >
-              {s.label}
-            </span>
-          </li>
-        ))}
-      </ol>
 
       {step === "booting" ? (
         <InlineBusy label={bootMessage} className="py-10" />
