@@ -7,9 +7,10 @@ Implements Rulebooks CORE + 00–16 (engine invariants, seed world, role workspa
 
 - **Monorepo:** npm workspaces + TypeScript
 - **Engine:** `@ankuaru/engine` (append-only events, projections in memory)
-- **API:** Fastify `@ankuaru/api` → `http://localhost:3001`
-- **Web:** Next.js `@ankuaru/web` → `http://localhost:3000`
-- **DB:** Prisma → Supabase Postgres (or local Docker Postgres)
+- **App:** Next.js `@ankuaru/web` (UI + App Router API) → `http://localhost:3000`
+- **DB:** Prisma → Supabase Postgres (or local Docker Postgres) for migrate/seed scripts
+
+The ledger API lives in Next.js Route Handlers (`/api/*`, rewritten to `/v1/*` and `/health`).
 
 ## Quick start
 
@@ -48,11 +49,12 @@ npm run db:migrate
 ### 3. Run
 
 ```bash
-npm run dev:api
-npm run dev:web
+npm run dev
 ```
 
 Open http://localhost:3000 → **Seed world** → pick Farmer / Collector / Aggregator / Exporter.
+
+API is same-origin (`/v1/...`). Do not set `NEXT_PUBLIC_API_URL` unless you point at an external API.
 
 ### 4. Tests
 
@@ -69,51 +71,29 @@ App/
   packages/engine        domain commands + invariants
   packages/schema        Zod envelope + shared vocabs
   packages/seed          eight-site CORE §11 world
-  apps/api               versioned /v1 commands
-  apps/web               Workspace / Network / Inspector
+  apps/web               UI + App Router API (`src/server/ledger-api.ts`)
+  apps/api               optional standalone Fastify (legacy)
   data/evidence          local file evidence store
 ```
 
-## Deploy API (Render)
+## Deploy (Vercel — recommended)
 
-Root Directory must be **`App`**.
+One project for UI + API.
 
 | Setting | Value |
 |--------|--------|
 | **Root Directory** | `App` |
-| **Build Command** | `npm install && npm run build:api` |
-| **Start Command** | `npm run start:api` |
-| **Node** | `22` (env `NODE_VERSION=22`) |
-
-Render often has **no separate Install field** — put `npm install` in the **Build Command**.
-
-Env vars: `DATABASE_URL`, `DIRECT_URL`, `WEB_ORIGIN` (Vercel URL), `JWT_SECRET`.
-
-## Deploy (Vercel)
-
-Use build command **`npm run build:web`** (not `build`, which is for the API on Render).
-
-### Recommended — Root Directory = `App/apps/web`
-
-In Vercel → Project → Settings → General:
-
-| Setting | Value |
-|--------|--------|
-| **Root Directory** | `App/apps/web` |
 | **Framework** | Next.js |
-| **Install Command** | `cd ../.. && npm install` |
-| **Build Command** | `cd ../.. && npm run build:web` |
+| **Install** | `npm install` |
+| **Build** | `npm run build:web` |
 
-Env vars: `NEXT_PUBLIC_API_URL` pointing at your hosted API (or leave local only for now).
+No `NEXT_PUBLIC_API_URL` needed (same origin).
 
-### Alternative — Root Directory = `App`
+**Note:** the ledger is in-memory per server instance. On Vercel serverless, cold starts reset the seed — click **Seed world** again after idle. For a long-lived process, use `npm run start` on a Node host.
 
-`App/package.json` lists `next` so Vercel can detect it. Build uses `vercel.json`:
+## Optional: standalone API (Render)
 
-- Install: `npm install`
-- Build: `npm run build:web`
-
-**Note:** the Fastify API (`apps/api`) is not a Vercel serverless app as-is — deploy web to Vercel and API separately (Railway/Fly/Render), or keep API local.
+`apps/api` Fastify still works if you prefer a separate backend. Root Directory `App`, build `npm install && npm run build:api`, start `npm run start:api`, and set `NEXT_PUBLIC_API_URL` on the web to the Render URL.
 
 ## Notes
 

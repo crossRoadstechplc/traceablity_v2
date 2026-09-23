@@ -8,7 +8,10 @@ import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 const PORT = Number(process.env.PORT ?? 3001);
-const WEB_ORIGIN = process.env.WEB_ORIGIN ?? "http://localhost:3000";
+const WEB_ORIGINS = (process.env.WEB_ORIGIN ?? "http://localhost:3000")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 const EVIDENCE_DIR = resolve(process.env.EVIDENCE_DIR ?? "./data/evidence");
 mkdirSync(EVIDENCE_DIR, { recursive: true });
 mkdirSync(resolve(process.env.REPORTS_DIR ?? "./data/reports"), { recursive: true });
@@ -57,7 +60,10 @@ function mapError(err: unknown) {
 
 async function buildServer() {
   const app = Fastify({ logger: true });
-  await app.register(cors, { origin: WEB_ORIGIN, credentials: true });
+  await app.register(cors, {
+    origin: WEB_ORIGINS.length === 1 ? WEB_ORIGINS[0] : WEB_ORIGINS,
+    credentials: true,
+  });
 
   app.get("/health", async () => ({ ok: true, service: "ankuaru-api", version: "0.1.0" }));
 
