@@ -1,7 +1,20 @@
 import { EngineError, type CapacityCode } from "@ankuaru/schema";
 import { createEngine, type Session } from "@ankuaru/engine";
-import { seedWorld, serializeSeed } from "@ankuaru/seed";
+import {
+  dbHasSimulatorData,
+  ensurePrismaEnginePath,
+  getPrisma,
+  getSimulatorSession,
+  hydrateEngine,
+  isDatabaseConfigured,
+  loadAllSimulatorSessions,
+  syncWorldToDb,
+  upsertSimulatorSession,
+  upsertUserWithMembership,
+} from "@ankuaru/db";
 import { randomUUID } from "node:crypto";
+
+ensurePrismaEnginePath();
 
 type BindBody = {
   actorId: string;
@@ -11,28 +24,35 @@ type BindBody = {
 
 type WorldState = {
   engine: ReturnType<typeof createEngine>;
-  seedMeta: ReturnType<typeof seedWorld> | null;
   sessions: Map<string, Session & { displayName?: string }>;
+  preferredTraceLotId?: string;
+  /** Index into engine.getEvents() already written to DB. */
+  syncedEventIndex: number;
+  ready: boolean;
+  hydratePromise: Promise<void> | null;
 };
 
 const g = globalThis as typeof globalThis & { __ankuaruWorld?: WorldState };
 
-const WORLD_KEY = "__ankuaruWorld_v4";
+const WORLD_KEY = "__ankuaruWorld_v9";
 
 function world(): WorldState {
   const store = g as unknown as Record<string, WorldState | undefined>;
   let state = store[WORLD_KEY];
-  // Recreate if HMR left an old engine instance without newer methods
   if (
     !state ||
     typeof state.engine.lineageTrace !== "function" ||
     typeof state.engine.networkProfile !== "function" ||
-    typeof state.engine.allowedIntakeTargets !== "function"
+    typeof state.engine.allowedIntakeTargets !== "function" ||
+    typeof state.engine.replaceWorld !== "function"
   ) {
     state = {
       engine: createEngine(),
-      seedMeta: null,
       sessions: new Map(),
+      preferredTraceLotId: undefined,
+      syncedEventIndex: 0,
+      ready: false,
+      hydratePromise: null,
     };
     store[WORLD_KEY] = state;
     delete (g as { __ankuaruWorld?: WorldState }).__ankuaruWorld;
@@ -40,9 +60,86 @@ function world(): WorldState {
   return state;
 }
 
-function getSession(headers: Headers): Session {
+function dbUnavailable(message = "database not configured"): Response {
+  return Response.json(
+    {
+      error: message,
+      hint: "Set DATABASE_URL and DIRECT_URL on the server (Vercel project env).",
+    },
+    { status: 503 },
+  );
+}
+
+async function ensureWorld(): Promise<WorldState> {
+  const w = world();
+  if (w.ready) return w;
+  if (w.hydratePromise) {
+    await w.hydratePromise;
+    return w;
+  }
+
+  w.hydratePromise = (async () => {
+    if (!isDatabaseConfigured()) {
+      w.ready = true;
+      return;
+    }
+    // Force Prisma client + env resolution before queries
+    getPrisma();
+    try {
+      if ((await dbHasSimulatorData()) && w.engine.getActors().length === 0) {
+        const h = await hydrateEngine();
+        w.engine = h.engine;
+        w.preferredTraceLotId = h.preferredTraceLotId;
+        w.syncedEventIndex = h.engine.getEvents().length;
+      } else if (
+        w.syncedEventIndex === 0 &&
+        w.engine.getEvents().length > 0
+      ) {
+        // Already hydrated in this process; don't treat all events as "new"
+        w.syncedEventIndex = w.engine.getEvents().length;
+      }
+      const sessions = await loadAllSimulatorSessions();
+      for (const [id, s] of sessions) {
+        if (!w.sessions.has(id)) w.sessions.set(id, s);
+      }
+      w.ready = true;
+    } catch (e) {
+      console.error("[ensureWorld] hydrate failed:", e);
+      throw e;
+    } finally {
+      w.hydratePromise = null;
+    }
+  })();
+
+  await w.hydratePromise;
+  return w;
+}
+
+async function persistWorld(): Promise<void> {
+  if (!isDatabaseConfigured()) {
+    const err = new Error("database not configured: set DATABASE_URL and DIRECT_URL");
+    (err as Error & { statusCode: number }).statusCode = 503;
+    throw err;
+  }
+  const w = world();
+  const result = await syncWorldToDb(w.engine, {
+    preferredTraceLotId: w.preferredTraceLotId,
+    sinceEventIndex: w.syncedEventIndex,
+  });
+  w.syncedEventIndex = result.nextEventIndex;
+}
+
+async function getSession(headers: Headers): Promise<Session> {
   const token = headers.get("x-session-id") ?? "";
-  const s = world().sessions.get(token);
+  const w = world();
+  let s = w.sessions.get(token);
+  if (!s && token) {
+    const fromDb = await getSimulatorSession(token);
+    if (fromDb) {
+      w.sessions.set(token, fromDb);
+      s = fromDb;
+    }
+  }
   if (!s) {
     const err = new Error("Unauthorized: bind a role first via POST /v1/session/bind");
     (err as Error & { statusCode: number }).statusCode = 401;
@@ -63,10 +160,26 @@ function mapError(err: unknown) {
       },
     };
   }
+  const msg = err instanceof Error ? err.message : "Unknown error";
+  if (
+    msg.includes("Query Engine") ||
+    msg.includes("Prisma Client could not locate") ||
+    msg.includes("Can't reach database server") ||
+    (err as { name?: string }).name === "PrismaClientInitializationError" ||
+    (err as { code?: string }).code === "P1001"
+  ) {
+    return {
+      statusCode: 503,
+      body: {
+        error: "database temporarily unreachable",
+        hint: "Supabase connection failed (P1001). Retry in a few seconds; confirm the project is not paused and DIRECT_URL works (`npx tsx scripts/check-db.ts`).",
+      },
+    };
+  }
   const statusCode = (err as { statusCode?: number }).statusCode ?? 500;
   return {
     statusCode,
-    body: { error: err instanceof Error ? err.message : "Unknown error" },
+    body: { error: msg },
   };
 }
 
@@ -160,34 +273,47 @@ const commands: Record<string, CmdHandler> = {
     world().engine.stocktake(s, body as Parameters<ReturnType<typeof createEngine>["stocktake"]>[1]),
 };
 
+const MUTATING_COMMANDS = new Set(Object.keys(commands));
+
 /**
  * Dispatch ledger API requests. `path` is after /api, e.g. "health", "v1/roles".
  */
 export async function handleApi(req: Request, pathParts: string[]): Promise<Response> {
   const path = pathParts.join("/");
   const method = req.method.toUpperCase();
-  const { engine, sessions } = world();
   const url = new URL(req.url);
 
   try {
     if (path === "health" && method === "GET") {
-      return json({ ok: true, service: "ankuaru-api", version: "0.1.0" });
-    }
-
-    if (path === "v1/seed" && method === "POST") {
-      const w = world();
-      w.seedMeta = seedWorld(w.engine);
-      w.engine = w.seedMeta.engine;
-      const data = serializeSeed(w.seedMeta);
       return json({
         ok: true,
-        actors: data.actors.length,
-        lots: data.lots.length,
-        events: data.events.length,
-        preferredTraceLotId: data.preferredTraceLotId,
-        integrity: data.integrity,
-        siteSummaries: data.siteSummaries,
+        service: "ankuaru-api",
+        version: "0.1.0",
+        database: isDatabaseConfigured(),
       });
+    }
+
+    // Mutating / world routes need DB when persistence is expected
+    if (path !== "health" && path !== "v1/openapi.json") {
+      try {
+        await ensureWorld();
+      } catch (e) {
+        if (!isDatabaseConfigured()) return dbUnavailable();
+        return errResponse(e);
+      }
+    }
+
+    const { engine, sessions } = world();
+
+    if (path === "v1/seed" && method === "POST") {
+      // Seeding is CLI-only (`npm run db:seed`). Do not wipe the live DB from the UI.
+      return json(
+        {
+          error: "Seed from the UI is disabled",
+          hint: "Run `npm run db:seed` from App/ when you want to reload the demo world.",
+        },
+        403,
+      );
     }
 
     if (path === "v1/roles" && method === "GET") {
@@ -212,52 +338,85 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
       const { actorId, capacity, userId } = body ?? {};
       const actor = engine.getActors().find((a) => a.actorId === actorId);
       if (!actor) return json({ error: "Actor not found" }, 404);
-      if (!actor.capacities.includes(capacity)) {
-        return json({ error: "Capacity not on actor" }, 400);
+
+      // Repair empty capacities (hydrate fallback + DB repair)
+      if (actor.capacities.length === 0) {
+        const byType: Record<string, CapacityCode> = {
+          farmer: "Farmer",
+          collector: "Collector",
+          akrabi: "Aggregator",
+          exporter: "Exporter",
+        };
+        const inferred = byType[actor.actorType];
+        if (inferred) {
+          actor.capacities = [inferred];
+          engine.addCapacity(actorId, inferred);
+        }
+      }
+
+      const bindCapacity =
+        capacity && actor.capacities.includes(capacity)
+          ? capacity
+          : actor.capacities[0];
+      if (!bindCapacity) {
+        return json(
+          {
+            error: "Capacity not on actor",
+            hint: "Actor has no capacities in DB — re-run npm run db:seed",
+            actorType: actor.actorType,
+            capacities: actor.capacities,
+          },
+          400,
+        );
       }
       let uid = userId;
       if (!uid) {
         const u = engine.createUser({ displayName: `${actor.displayName} Operator` });
         engine.bindUserToActor(u.userId, actorId);
         uid = u.userId;
+        await upsertUserWithMembership(u);
       }
       const sessionId = randomUUID();
       const session: Session = {
         userId: uid,
         actorId,
-        capacity,
+        capacity: bindCapacity,
         sourceChannel: "web",
       };
       sessions.set(sessionId, { ...session, displayName: actor.displayName });
+      await upsertSimulatorSession(sessionId, {
+        ...session,
+        displayName: actor.displayName,
+      });
       return json({
         sessionId,
         actor: {
           actorId: actor.actorId,
           actorType: actor.actorType,
           displayName: actor.displayName,
-          capacity,
+          capacity: bindCapacity,
         },
       });
     }
 
     if (path === "v1/me" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       const actor = engine.getActors().find((a) => a.actorId === s.actorId)!;
       return json({ session: s, actor });
     }
 
     if (path === "v1/inventory" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       return json({ lots: engine.inventory(s.actorId) });
     }
 
     if (path === "v1/pending-receipts" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       return json({ movements: engine.pendingReceipts(s.actorId) });
     }
 
     if (path === "v1/network" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       const children = engine.networkTree(s.actorId);
       return json({
         self: {
@@ -279,7 +438,7 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
     }
 
     if (path.startsWith("v1/network/") && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       const subjectId = path.slice("v1/network/".length);
       if (!subjectId || subjectId.includes("/")) {
         return json({ error: "Not found" }, 404);
@@ -290,23 +449,23 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
     }
 
     if (path === "v1/inspector/lots" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       return json({ lots: engine.visibleLots(s.actorId) });
     }
 
     if (path === "v1/inspector/lineage" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       const lotId = url.searchParams.get("lotId") ?? "";
       return json(engine.lineageTrace(lotId, s.actorId));
     }
 
     if (path === "v1/inspector/integrity" && method === "GET") {
-      getSession(req.headers);
+      await getSession(req.headers);
       return json(engine.integrityChecks());
     }
 
     if (path === "v1/send-targets" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       return json({
         targets: engine.allowedSendTargets(s.actorId).map((t) => ({
           actorId: t.actorId,
@@ -317,7 +476,7 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
     }
 
     if (path === "v1/intake-targets" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       return json({
         targets: engine.allowedIntakeTargets(s.actorId).map((t) => ({
           actorId: t.actorId,
@@ -328,7 +487,7 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
     }
 
     if (path === "v1/inspector/activity" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       const events = engine.visibleEvents(s.actorId).slice(-100).reverse();
       return json({
         events: events.map((e) => ({
@@ -345,7 +504,7 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
     }
 
     if (path === "v1/lot-detail" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       const lotId = url.searchParams.get("lotId") ?? "";
       const lot = engine.getLots().find((l) => l.lotId === lotId);
       if (!lot) return json({ error: "Lot not found" }, 404);
@@ -369,19 +528,23 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
       }
       const handler = commands[name];
       if (!handler) return json({ error: "Not found" }, 404);
-      const s = getSession(req.headers);
+      if (!isDatabaseConfigured()) return dbUnavailable();
+      const s = await getSession(req.headers);
       const body = await readBody(req);
       const result = handler(s, body);
+      if (MUTATING_COMMANDS.has(name)) {
+        await persistWorld();
+      }
       return json({ ok: true, result });
     }
 
     if (path === "v1/notifications" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       return json({ notifications: engine.getNotifications(s.userId) });
     }
 
     if (path === "v1/dashboard" && method === "GET") {
-      const s = getSession(req.headers);
+      const s = await getSession(req.headers);
       return json({
         overdueReceipts: engine.pendingReceipts(s.actorId).filter((m) => m.state === "receipt_overdue"),
         pendingReceipts: engine.pendingReceipts(s.actorId),
@@ -395,13 +558,16 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
     }
 
     if (path === "v1/reports" && method === "POST") {
-      getSession(req.headers);
+      await getSession(req.headers);
+      if (!isDatabaseConfigured()) return dbUnavailable();
       const body = await readBody<{ lotId: string }>(req);
       const report = engine.generateReport(body.lotId);
+      await persistWorld();
       return json({ report, fingerprintOk: engine.verifyReportFingerprint(report.reportId) });
     }
 
     if (path === "v1/ussd" && method === "POST") {
+      if (!isDatabaseConfigured()) return dbUnavailable();
       const body = await readBody<{
         actorId: string;
         capacity: CapacityCode;
@@ -421,6 +587,7 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
           movementId: body.movementId,
           receiverDeclaredKg: body.receiverDeclaredKg,
         });
+        await persistWorld();
         return json({ ok: true, result, channel_detail: "ussd" });
       }
       return json({ error: "Unsupported USSD action" }, 400);

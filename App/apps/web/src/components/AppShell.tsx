@@ -3,19 +3,16 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Loader2, LogOut, Network, RefreshCw, ScanSearch, Warehouse } from "lucide-react";
+import { LogOut, Network, ScanSearch, Warehouse } from "lucide-react";
 import type { SessionInfo } from "@/lib/api";
-import { seedWorld } from "@/lib/seed";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { LoadingOverlay } from "@/components/LoadingOverlay";
 import { cn } from "@/lib/utils";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [session, setSession] = useState<SessionInfo | null>(null);
-  const [reseeding, setReseeding] = useState(false);
 
   useEffect(() => {
     const raw = localStorage.getItem("ankuaru_session");
@@ -25,23 +22,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
     setSession(JSON.parse(raw) as SessionInfo);
   }, [router]);
-
-  async function reseed() {
-    if (reseeding) return;
-    const ok = window.confirm(
-      "Reseed the shared world? This resets all lots, events, and sessions. You will pick a role again.",
-    );
-    if (!ok) return;
-    setReseeding(true);
-    try {
-      await seedWorld();
-      localStorage.removeItem("ankuaru_session");
-      router.replace("/");
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : "Reseed failed");
-      setReseeding(false);
-    }
-  }
 
   if (!session) {
     return (
@@ -94,20 +74,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               );
             })}
             <Button
-              variant="outline"
-              size="sm"
-              className="ml-1"
-              disabled={reseeding}
-              onClick={() => void reseed()}
-            >
-              {reseeding ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-              <span className="hidden sm:inline">{reseeding ? "Reseeding…" : "Reseed"}</span>
-            </Button>
-            <Button
               variant="ghost"
               size="sm"
               onClick={() => {
@@ -122,11 +88,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <div className="mx-auto max-w-6xl px-4 py-6">{children}</div>
-      <LoadingOverlay
-        open={reseeding}
-        title="Reseeding world"
-        detail="Rebuilding eight sites, cycles, and the multi-farm blend…"
-      />
     </div>
   );
 }

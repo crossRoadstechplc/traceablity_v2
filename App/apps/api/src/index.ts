@@ -2,7 +2,16 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { EngineError, type CapacityCode } from "@ankuaru/schema";
 import { createEngine, type Session } from "@ankuaru/engine";
-import { seedWorld, serializeSeed } from "@ankuaru/seed";
+import {
+  dbHasSimulatorData,
+  getSimulatorSession,
+  hydrateEngine,
+  isDatabaseConfigured,
+  loadAllSimulatorSessions,
+  syncWorldToDb,
+  upsertSimulatorSession,
+  upsertUserWithMembership,
+} from "@ankuaru/db";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -18,7 +27,10 @@ mkdirSync(resolve(process.env.REPORTS_DIR ?? "./data/reports"), { recursive: tru
 
 /** In-process shared world (CORE: one shared ledger for all roles) */
 let engine = createEngine();
-let seedMeta: ReturnType<typeof seedWorld> | null = null;
+let preferredTraceLotId: string | undefined;
+let syncedEventIndex = 0;
+let worldReady = false;
+let hydratePromise: Promise<void> | null = null;
 
 type BindBody = {
   actorId: string;
@@ -28,9 +40,61 @@ type BindBody = {
 
 const sessions = new Map<string, Session & { displayName?: string }>();
 
-function getSession(req: { headers: Record<string, string | string[] | undefined> }): Session {
+async function ensureWorld(): Promise<void> {
+  if (worldReady) return;
+  if (hydratePromise) {
+    await hydratePromise;
+    return;
+  }
+  hydratePromise = (async () => {
+    if (!isDatabaseConfigured()) {
+      worldReady = true;
+      return;
+    }
+    try {
+      if ((await dbHasSimulatorData()) && engine.getActors().length === 0) {
+        const h = await hydrateEngine();
+        engine = h.engine;
+        preferredTraceLotId = h.preferredTraceLotId;
+        syncedEventIndex = h.engine.getEvents().length;
+      }
+      const fromDb = await loadAllSimulatorSessions();
+      for (const [id, s] of fromDb) {
+        if (!sessions.has(id)) sessions.set(id, s);
+      }
+      worldReady = true;
+    } finally {
+      hydratePromise = null;
+    }
+  })();
+  await hydratePromise;
+}
+
+async function persistWorld(): Promise<void> {
+  if (!isDatabaseConfigured()) {
+    const err = new Error("database not configured: set DATABASE_URL and DIRECT_URL");
+    (err as Error & { statusCode: number }).statusCode = 503;
+    throw err;
+  }
+  const result = await syncWorldToDb(engine, {
+    preferredTraceLotId,
+    sinceEventIndex: syncedEventIndex,
+  });
+  syncedEventIndex = result.nextEventIndex;
+}
+
+async function getSession(req: {
+  headers: Record<string, string | string[] | undefined>;
+}): Promise<Session> {
   const token = String(req.headers["x-session-id"] ?? "");
-  const s = sessions.get(token);
+  let s = sessions.get(token);
+  if (!s && token) {
+    const fromDb = await getSimulatorSession(token);
+    if (fromDb) {
+      sessions.set(token, fromDb);
+      s = fromDb;
+    }
+  }
   if (!s) {
     const err = new Error("Unauthorized: bind a role first via POST /v1/session/bind");
     (err as Error & { statusCode: number }).statusCode = 401;
@@ -65,26 +129,28 @@ async function buildServer() {
     credentials: true,
   });
 
-  app.get("/health", async () => ({ ok: true, service: "ankuaru-api", version: "0.1.0" }));
-
-  app.post<{ Body: { force?: boolean } }>("/v1/seed", async (req, reply) => {
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.url === "/health" || req.url.startsWith("/v1/openapi")) return;
     try {
-      seedMeta = seedWorld(engine);
-      engine = seedMeta.engine;
-      const data = serializeSeed(seedMeta);
-      return {
-        ok: true,
-        actors: data.actors.length,
-        lots: data.lots.length,
-        events: data.events.length,
-        preferredTraceLotId: data.preferredTraceLotId,
-        integrity: data.integrity,
-        siteSummaries: data.siteSummaries,
-      };
+      await ensureWorld();
     } catch (err) {
       const m = mapError(err);
       return reply.code(m.statusCode).send(m.body);
     }
+  });
+
+  app.get("/health", async () => ({
+    ok: true,
+    service: "ankuaru-api",
+    version: "0.1.0",
+    database: isDatabaseConfigured(),
+  }));
+
+  app.post<{ Body: { force?: boolean } }>("/v1/seed", async (_req, reply) => {
+    return reply.code(403).send({
+      error: "Seed from the API is disabled",
+      hint: "Run `npm run db:seed` from App/ when you want to reload the demo world.",
+    });
   });
 
   app.get("/v1/roles", async () => {
@@ -114,6 +180,7 @@ async function buildServer() {
       const u = engine.createUser({ displayName: `${actor.displayName} Operator` });
       engine.bindUserToActor(u.userId, actorId);
       uid = u.userId;
+      await upsertUserWithMembership(u);
     }
     const sessionId = randomUUID();
     const session: Session = {
@@ -123,6 +190,10 @@ async function buildServer() {
       sourceChannel: "web",
     };
     sessions.set(sessionId, { ...session, displayName: actor.displayName });
+    await upsertSimulatorSession(sessionId, {
+      ...session,
+      displayName: actor.displayName,
+    });
     return {
       sessionId,
       actor: {
@@ -136,7 +207,7 @@ async function buildServer() {
 
   app.get("/v1/me", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       const actor = engine.getActors().find((a) => a.actorId === s.actorId)!;
       return { session: s, actor };
     } catch (err) {
@@ -147,7 +218,7 @@ async function buildServer() {
 
   app.get("/v1/inventory", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       return { lots: engine.inventory(s.actorId) };
     } catch (err) {
       const m = mapError(err);
@@ -157,7 +228,7 @@ async function buildServer() {
 
   app.get("/v1/pending-receipts", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       return { movements: engine.pendingReceipts(s.actorId) };
     } catch (err) {
       const m = mapError(err);
@@ -167,7 +238,7 @@ async function buildServer() {
 
   app.get("/v1/network", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       const children = engine.networkTree(s.actorId);
       return {
         self: {
@@ -194,7 +265,7 @@ async function buildServer() {
 
   app.get<{ Params: { actorId: string } }>("/v1/network/:actorId", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       const profile = engine.networkProfile(s.actorId, req.params.actorId);
       if (!profile) return reply.code(404).send({ error: "Actor not found or not in your network" });
       return profile;
@@ -206,7 +277,7 @@ async function buildServer() {
 
   app.get("/v1/inspector/lots", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       return { lots: engine.visibleLots(s.actorId) };
     } catch (err) {
       const m = mapError(err);
@@ -216,7 +287,7 @@ async function buildServer() {
 
   app.get<{ Querystring: { lotId: string } }>("/v1/inspector/lineage", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       return engine.lineageTrace(req.query.lotId, s.actorId);
     } catch (err) {
       const m = mapError(err);
@@ -226,7 +297,7 @@ async function buildServer() {
 
   app.get("/v1/inspector/integrity", async (req, reply) => {
     try {
-      getSession(req);
+      await getSession(req);
       return engine.integrityChecks();
     } catch (err) {
       const m = mapError(err);
@@ -236,7 +307,7 @@ async function buildServer() {
 
   app.get("/v1/send-targets", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       return {
         targets: engine.allowedSendTargets(s.actorId).map((t) => ({
           actorId: t.actorId,
@@ -252,7 +323,7 @@ async function buildServer() {
 
   app.get("/v1/intake-targets", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       return {
         targets: engine.allowedIntakeTargets(s.actorId).map((t) => ({
           actorId: t.actorId,
@@ -273,8 +344,15 @@ async function buildServer() {
   ) => {
     app.post<{ Body: T }>(path, async (req, reply) => {
       try {
-        const s = getSession(req);
+        if (!isDatabaseConfigured()) {
+          return reply.code(503).send({
+            error: "database not configured",
+            hint: "Set DATABASE_URL and DIRECT_URL",
+          });
+        }
+        const s = await getSession(req);
         const result = handler(s, req.body as T);
+        await persistWorld();
         return { ok: true, result };
       } catch (err) {
         const m = mapError(err);
@@ -396,7 +474,7 @@ async function buildServer() {
 
   app.get("/v1/notifications", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       return { notifications: engine.getNotifications(s.userId) };
     } catch (err) {
       const m = mapError(err);
@@ -406,7 +484,7 @@ async function buildServer() {
 
   app.get("/v1/dashboard", async (req, reply) => {
     try {
-      const s = getSession(req);
+      const s = await getSession(req);
       return {
         overdueReceipts: engine.pendingReceipts(s.actorId).filter((m) => m.state === "receipt_overdue"),
         pendingReceipts: engine.pendingReceipts(s.actorId),
@@ -425,8 +503,9 @@ async function buildServer() {
 
   app.post<{ Body: { lotId: string } }>("/v1/reports", async (req, reply) => {
     try {
-      getSession(req);
+      await getSession(req);
       const report = engine.generateReport(req.body.lotId);
+      if (isDatabaseConfigured()) await persistWorld();
       return { report, fingerprintOk: engine.verifyReportFingerprint(report.reportId) };
     } catch (err) {
       const m = mapError(err);
@@ -445,6 +524,12 @@ async function buildServer() {
     };
   }>("/v1/ussd", async (req, reply) => {
     try {
+      if (!isDatabaseConfigured()) {
+        return reply.code(503).send({
+          error: "database not configured",
+          hint: "Set DATABASE_URL and DIRECT_URL",
+        });
+      }
       const body = req.body;
       const session: Session = {
         userId: randomUUID(),
@@ -458,6 +543,7 @@ async function buildServer() {
           movementId: body.movementId,
           receiverDeclaredKg: body.receiverDeclaredKg,
         });
+        await persistWorld();
         return { ok: true, result, channel_detail: "ussd" };
       }
       return reply.code(400).send({ error: "Unsupported USSD action" });

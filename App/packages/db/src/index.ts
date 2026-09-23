@@ -1,14 +1,19 @@
-import { PrismaClient } from "@prisma/client";
-
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-  });
-
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
-
+export { prisma, getPrisma } from "./client.js";
 export type { PersistableEvent } from "./persist.js";
 export { persistEvents } from "./persist.js";
+export {
+  replaceSimulatorWorld,
+  isDatabaseConfigured,
+  type FlushOptions,
+} from "./flush.js";
+export { hydrateEngine, dbHasSimulatorData, type HydrateResult } from "./hydrate.js";
+export {
+  upsertSimulatorSession,
+  getSimulatorSession,
+  loadAllSimulatorSessions,
+  clearSimulatorSessions,
+} from "./sessions.js";
+export { SIMULATOR_TRUNCATE_SQL } from "./mappers.js";
+export { ensurePrismaEnginePath } from "./engine-path.js";
+export { upsertUserWithMembership } from "./persist-user.js";
+export { syncWorldToDb, type SyncOptions } from "./sync.js";

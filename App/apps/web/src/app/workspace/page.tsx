@@ -399,7 +399,7 @@ function WorkspaceInner() {
                 </Field>
                 {intakeTargets.length === 0 && (
                   <p className="text-xs text-muted-foreground">
-                    No sponsored suppliers yet — use Onboard (or Reseed) first.
+                    No sponsored suppliers yet — use Onboard first.
                   </p>
                 )}
                 <Alert>

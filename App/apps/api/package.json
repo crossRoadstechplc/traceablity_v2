@@ -11,6 +11,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@ankuaru/db": "*",
     "@ankuaru/engine": "*",
     "@ankuaru/schema": "*",
     "@ankuaru/seed": "*",

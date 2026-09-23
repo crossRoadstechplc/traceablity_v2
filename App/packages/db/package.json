@@ -18,6 +18,8 @@
     "test": "echo \"no tests\""
   },
   "dependencies": {
+    "@ankuaru/engine": "*",
+    "@ankuaru/schema": "*",
     "@prisma/client": "^6.1.0"
   },
   "devDependencies": {

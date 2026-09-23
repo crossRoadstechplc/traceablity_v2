@@ -11,7 +11,6 @@ import {
   Warehouse,
 } from "lucide-react";
 import { api, type SessionInfo } from "@/lib/api";
-import { seedWorld } from "@/lib/seed";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
@@ -89,21 +88,18 @@ export default function HomePage() {
       setStep("booting");
       setError(null);
       try {
-        setBootMessage("Checking for a seeded world…");
-        let list = await api<Role[]>("/v1/roles");
+        setBootMessage("Loading actors from the database…");
+        const list = await api<Role[]>("/v1/roles");
         if (cancelled) return;
-        if (list.length === 0) {
-          setBootMessage("Seeding eight Ethiopian sites…");
-          await seedWorld();
-          if (cancelled) return;
-          list = await api<Role[]>("/v1/roles");
-        }
-        if (cancelled) return;
-        setRoles(list);
-        setStep(list.length ? "pick-role" : "booting");
         if (!list.length) {
-          setError("Seed completed but no demo roles appeared.");
+          setError(
+            "No demo actors in the database. Seed once from the project root: npm run db:seed",
+          );
+          setStep("booting");
+          return;
         }
+        setRoles(list);
+        setStep("pick-role");
       } catch (e) {
         if (cancelled) return;
         setError(
@@ -164,8 +160,8 @@ export default function HomePage() {
         </h1>
         <p className="mt-3 max-w-2xl text-muted-foreground">
           One shared event-sourced world. Enter as a User bound to an Actor and Capacity —
-          Farmer → Collector → Aggregator → Exporter. Use <strong>Reseed</strong> in the nav
-          anytime to reset the ledger.
+          Farmer → Collector → Aggregator → Exporter. Seed the database once with{" "}
+          <code className="text-xs">npm run db:seed</code>, then enter any role.
         </p>
       </div>
 
@@ -177,7 +173,7 @@ export default function HomePage() {
 
       <ol className="mb-8 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {[
-          { id: "booting", label: "1 · Auto-seed" },
+          { id: "booting", label: "1 · Load world" },
           { id: "pick-role", label: "2 · Choose role" },
           { id: "pick-actor", label: "3 · Enter as actor" },
         ].map((s, i) => (
@@ -206,7 +202,7 @@ export default function HomePage() {
           <div>
             <h2 className="font-display text-xl font-semibold">Choose your capacity</h2>
             <p className="text-sm text-muted-foreground">
-              {roles.length} demo actors ready · world auto-seeded
+              {roles.length} demo actors ready · loaded from database
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">

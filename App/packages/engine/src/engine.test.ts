@@ -94,6 +94,82 @@ describe("LedgerEngine CORE + modules", () => {
     ).toThrow(EngineError);
   });
 
+  it("onboard matrix — exporter → aggregator (+ optional facility child)", () => {
+    const aggUser = eng.createUser({ displayName: "Agg Op" }).userId;
+    const agg = eng.onboardActor(session(exporterId, "Exporter", expUser), {
+      actorType: "akrabi",
+      displayName: "New Aggregator",
+      legalIdentityRef: `REG-AK-${randomUUID().slice(0, 8)}`,
+      metadata: { region: "Sidama", userOnboarded: "true" },
+      facility: {
+        capabilities: ["wet_milling", "washed_processing"],
+        displayName: "New WS",
+        facilityType: "washing_station",
+      },
+    });
+    expect(eng.getActors().find((a) => a.actorId === agg.actorId)).toBeTruthy();
+    expect(agg.sponsorActorId).toBe(exporterId);
+    expect(agg.capacities).toContain("Aggregator");
+    const children = eng.getActors().filter((a) => a.sponsorActorId === agg.actorId);
+    expect(children.some((c) => c.actorType === "washing_station")).toBe(true);
+    eng.bindUserToActor(aggUser, agg.actorId);
+  });
+
+  it("onboard matrix — aggregator → collector", () => {
+    const col = eng.onboardActor(session(akrabiId, "Aggregator"), {
+      actorType: "collector",
+      displayName: "New Collector",
+      legalIdentityRef: `REG-COL-${randomUUID().slice(0, 8)}`,
+      metadata: {
+        region: "Sidama",
+        phone: "+251911000000",
+        coverageArea: "test",
+        yearsCollecting: "3",
+        userOnboarded: "true",
+      },
+    });
+    expect(eng.getActors().find((a) => a.actorId === col.actorId)).toBeTruthy();
+    expect(col.sponsorActorId).toBe(akrabiId);
+    expect(col.capacities).toContain("Collector");
+    expect(col.metadata.userOnboarded).toBe("true");
+  });
+
+  it("onboard matrix — collector → farmer", () => {
+    const farm = eng.onboardActor(session(collectorId, "Collector"), {
+      actorType: "farmer",
+      displayName: "New Farmer",
+      legalIdentityRef: `FAYDA-${randomUUID().slice(0, 8)}`,
+      metadata: {
+        region: "Sidama",
+        kebele: "01",
+        farmSizeHa: "1.5",
+        variety: "heirloom",
+        yearsFarming: "5",
+        userOnboarded: "true",
+      },
+    });
+    expect(eng.getActors().find((a) => a.actorId === farm.actorId)).toBeTruthy();
+    expect(farm.sponsorActorId).toBe(collectorId);
+    expect(farm.capacities).toContain("Farmer");
+  });
+
+  it("onboard matrix — wrong target type is rejected", () => {
+    expect(() =>
+      eng.onboardActor(session(exporterId, "Exporter", expUser), {
+        actorType: "farmer",
+        displayName: "Nope",
+        legalIdentityRef: "NOPE-1",
+      }),
+    ).toThrow(EngineError);
+    expect(() =>
+      eng.onboardActor(session(akrabiId, "Aggregator"), {
+        actorType: "akrabi",
+        displayName: "Nope",
+        legalIdentityRef: "NOPE-2",
+      }),
+    ).toThrow(EngineError);
+  });
+
   it("INV-07 mass balance closes; INV-12 rejects non-custodian process", () => {
     const lot = eng.createOriginLot(session(farmerId, "Farmer", farmUser), {
       massKg: 1000,

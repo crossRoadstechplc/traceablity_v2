@@ -1,5 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // native = host; debian for Vercel; windows for local Next on Windows
+  binaryTargets = ["native", "windows", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -970,6 +972,31 @@ model DisplaySequence {
   nextVal Int    @default(1) @map("next_val")
 
   @@map("display_sequences")
+  @@schema("public")
+}
+
+// ─── Simulator runtime (API sessions + app meta) ────────────────────────────
+
+model SimulatorSession {
+  sessionId   String   @id @map("session_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  actorId     String   @map("actor_id") @db.Uuid
+  capacity    String
+  displayName String?  @map("display_name")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([actorId])
+  @@map("simulator_sessions")
+  @@schema("public")
+}
+
+model AppMeta {
+  id                   String   @id @default("default")
+  preferredTraceLotId  String?  @map("preferred_trace_lot_id") @db.Uuid
+  lastHash             String?  @map("last_hash")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@map("app_meta")
   @@schema("public")
 }
 

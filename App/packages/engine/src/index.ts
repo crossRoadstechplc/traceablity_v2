@@ -281,7 +281,7 @@ export type ReportRecord = {
   superseded: boolean;
 };
 
-type World = {
+export type World = {
   users: Map<string, UserRecord>;
   actors: Map<string, ActorRecord>;
   lots: Map<string, LotRecord>;
@@ -448,6 +448,11 @@ export class LedgerEngine {
 
   snapshot(): World {
     return this.w;
+  }
+
+  /** Replace the entire in-memory world (used when hydrating from Postgres). */
+  replaceWorld(world: World): void {
+    this.w = world;
   }
 
   loadWorld(partial: Partial<World> & { actors?: ActorRecord[]; lots?: LotRecord[] }): void {
@@ -641,6 +646,7 @@ export class LedgerEngine {
       capacities: caps,
     };
     this.w.actors.set(actorId, actor);
+    const affectedIds = [actorId];
     if (input.facility) {
       this.w.facilities.set(actorId, {
         actorId,
@@ -656,7 +662,7 @@ export class LedgerEngine {
           displayName:
             input.facility.displayName ??
             `${input.displayName} ${facType === "mill" ? "Mill" : "Washing Station"}`,
-          legalIdentityRef: `REG-FAC-${Date.now().toString().slice(-6)}`,
+          legalIdentityRef: `REG-FAC-${randomUUID().replace(/-/g, "").slice(0, 10)}`,
           status: "active",
           sponsorActorId: actorId,
           metadata: {
@@ -672,6 +678,7 @@ export class LedgerEngine {
           actorId: facId,
           capabilities: input.facility.capabilities,
         });
+        affectedIds.push(facId);
       }
     }
     if (
@@ -687,7 +694,7 @@ export class LedgerEngine {
             : ["wet_milling", "washed_processing"]),
       });
     }
-    this.commitEvent(session, "actor_onboarded", { actor }, [actorId]);
+    this.commitEvent(session, "actor_onboarded", { actor }, affectedIds);
     return actor;
   }
 
@@ -2442,6 +2449,26 @@ export class LedgerEngine {
     return [...this.w.movements.values()];
   }
 
+  getUsers(): UserRecord[] {
+    return [...this.w.users.values()];
+  }
+
+  getFacilities(): FacilityRecord[] {
+    return [...this.w.facilities.values()];
+  }
+
+  getDiscrepancies(): DiscrepancyRecord[] {
+    return [...this.w.discrepancies];
+  }
+
+  getLotSeq(): number {
+    return this.w.lotSeq;
+  }
+
+  getLastHash(): string {
+    return this.w.lastHash;
+  }
+
   getIssues(): IssueRecord[] {
     return [...this.w.issues];
   }
@@ -2469,4 +2496,9 @@ export class LedgerEngine {
 
 export function createEngine(): LedgerEngine {
   return new LedgerEngine();
+}
+
+/** Build an empty World shell (for hydrate assembly). */
+export function createEmptyWorld(): World {
+  return emptyWorld();
 }

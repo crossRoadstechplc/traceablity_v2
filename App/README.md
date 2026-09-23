@@ -21,7 +21,7 @@ cd App
 cp .env.example .env
 ```
 
-**Supabase:** paste `DATABASE_URL` (pooler `:6543?pgbouncer=true`) and `DIRECT_URL` (session `:5432`).
+**Supabase:** paste `DATABASE_URL` (pooler `:6543?pgbouncer=true`) and `DIRECT_URL` (session `:5432`). Both are **required** for the live API (hydrate + persist). Without them the API returns 503 on seed/commands.
 
 In Supabase SQL editor:
 
@@ -52,9 +52,19 @@ npm run db:migrate
 npm run dev
 ```
 
-Open http://localhost:3000 → **Seed world** → pick Farmer / Collector / Aggregator / Exporter.
+Open http://localhost:3000 → pick Farmer / Collector / Aggregator / Exporter.
+
+**Seed once yourself** (not from the UI):
+
+```bash
+npm run db:seed
+```
+
+The app hydrates from Postgres and persists command changes incrementally. There is no auto-seed or Reseed button.
 
 API is same-origin (`/v1/...`). Do not set `NEXT_PUBLIC_API_URL` unless you point at an external API.
+
+`apps/web` loads `App/.env` via `next.config.mjs` so `DATABASE_URL` / `DIRECT_URL` are available to the ledger API locally.
 
 ### 4. Tests
 
@@ -71,6 +81,7 @@ App/
   packages/engine        domain commands + invariants
   packages/schema        Zod envelope + shared vocabs
   packages/seed          eight-site CORE §11 world
+  packages/db            Prisma hydrate + flush (Postgres source of truth)
   apps/web               UI + App Router API (`src/server/ledger-api.ts`)
   apps/api               optional standalone Fastify (legacy)
   data/evidence          local file evidence store
@@ -92,11 +103,20 @@ Leave `NEXT_PUBLIC_API_URL` unset (same-origin `/v1`).
 
 If Root Directory is instead `App`, Install = `npm install`, Build = `npm run vercel-build`.
 
-**Note:** the ledger is in-memory per server instance. On Vercel serverless, cold starts reset the seed — the home page auto-seeds, or use **Reseed** in the nav. For a long-lived process, use `npm run start` on a Node host.
+### Required environment (Vercel)
+
+| Variable | Purpose |
+|----------|---------|
+| `DATABASE_URL` | Postgres pooler URL (Supabase `:6543?pgbouncer=true`) |
+| `DIRECT_URL` | Session/direct URL (Supabase `:5432`) for migrate + bulk seed/flush |
+
+Without these, mutating API routes return **503** with `database not configured`.
+
+The live ledger **hydrates from Postgres** on cold start. Commands **upsert** changed rows (no full truncate). Seed only via `npm run db:seed`. Sessions are stored in `simulator_sessions` so bind survives idle/cold starts.
 
 ## Optional: standalone API (Render)
 
-`apps/api` Fastify still works if you prefer a separate backend. Root Directory `App`, build `npm install && npm run build:api`, start `npm run start:api`, and set `NEXT_PUBLIC_API_URL` on the web to the Render URL.
+`apps/api` Fastify uses the same hydrate/flush helpers. Root Directory `App`, build `npm install && npm run build:api`, start `npm run start:api`, and set `NEXT_PUBLIC_API_URL` on the web to the Render URL. Set the same `DATABASE_URL` / `DIRECT_URL` there.
 
 ## Notes
 

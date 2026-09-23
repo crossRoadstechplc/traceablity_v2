@@ -421,7 +421,111 @@ export function seedWorld(existing?: LedgerEngine): SeedResult {
     if (site.route === "natural") naturalGreens.push(green3.lotId);
     else washedGreens.push(green3.lotId);
 
-    // Demo farmer lot for first 3 sites
+    // Cycle 4: Open working inventory for every role (Workspace must not be empty)
+    // Farmer — origin lots still at the farm
+    eng.createOriginLot(sess(farmerIds[0]!, "Farmer"), {
+      massKg: 420,
+      processingRoute: site.route === "natural" ? "natural" : "washed",
+      cropYear: "2025-2026",
+    });
+    if (farmerIds[1]) {
+      eng.createOriginLot(sess(farmerIds[1]!, "Farmer"), {
+        massKg: 360,
+        processingRoute: site.route === "natural" ? "natural" : "washed",
+        cropYear: "2025-2026",
+      });
+    }
+
+    // Collector — received cherry held at collection point (not yet sent upstream)
+    for (let f = 0; f < 3; f++) {
+      const fid = farmerIds[f]!;
+      const lot = eng.createOriginLot(sess(fid, "Farmer"), {
+        massKg: 440,
+        processingRoute: site.route === "natural" ? "natural" : "washed",
+        cropYear: "2025-2026",
+      });
+      hop(
+        eng,
+        lot.lotId,
+        fid,
+        "Farmer",
+        collectorId,
+        "Collector",
+        440,
+        `${site.name} collection`,
+      );
+    }
+
+    // Aggregator — cherry received + aggregated, kept on station (not exported)
+    {
+      const openAgg: string[] = [];
+      for (let f = 0; f < 2; f++) {
+        const fid = farmerIds[f]!;
+        const lot = eng.createOriginLot(sess(fid, "Farmer"), {
+          massKg: 460,
+          processingRoute: site.route === "natural" ? "natural" : "washed",
+          cropYear: "2025-2026",
+        });
+        hop(
+          eng,
+          lot.lotId,
+          fid,
+          "Farmer",
+          collectorId,
+          "Collector",
+          460,
+          `${site.name} collection`,
+        );
+        hop(
+          eng,
+          lot.lotId,
+          collectorId,
+          "Collector",
+          aggregatorId,
+          "Aggregator",
+          460,
+          `${site.name} station`,
+        );
+        openAgg.push(lot.lotId);
+      }
+      eng.aggregate(sess(aggregatorId, "Aggregator"), { parentLotIds: openAgg });
+    }
+
+    // Aggregator — processed green kept at station (ownership + custody stay local)
+    {
+      const lot = eng.createOriginLot(sess(farmerIds[0]!, "Farmer"), {
+        massKg: 500,
+        processingRoute: site.route === "natural" ? "natural" : "washed",
+        cropYear: "2025-2026",
+      });
+      hop(
+        eng,
+        lot.lotId,
+        farmerIds[0]!,
+        "Farmer",
+        collectorId,
+        "Collector",
+        500,
+        `${site.name} collection`,
+      );
+      hop(
+        eng,
+        lot.lotId,
+        collectorId,
+        "Collector",
+        aggregatorId,
+        "Aggregator",
+        500,
+        `${site.name} station`,
+      );
+      if (site.route === "natural") {
+        processNatural(eng, aggregatorId, lot.lotId, 500);
+      } else {
+        processWashed(eng, aggregatorId, lot.lotId, 500);
+      }
+    }
+
+    // Demo farmer lot for first 3 sites (extra selectable stock)
     if (si < 3) {
       eng.createOriginLot(sess(farmerIds[0]!, "Farmer"), {
         massKg: 310 + 40 * si,

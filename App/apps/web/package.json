@@ -10,6 +10,7 @@
     "test": "echo \"no web unit tests\""
   },
   "dependencies": {
+    "@ankuaru/db": "*",
     "@ankuaru/engine": "*",
     "@ankuaru/schema": "*",
     "@ankuaru/seed": "*",

@@ -1,7 +1,4 @@
-/**
- * Persist engine events + integrity checkpoints to Prisma/Supabase.
- */
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type Prisma } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -49,7 +46,7 @@ export async function persistEvents(events: PersistableEvent[]): Promise<number>
             | "mobile_offline_sync"
             | "retrospective",
           retrospectiveFlag: e.retrospectiveFlag,
-          payload: e.payload,
+          payload: e.payload as Prisma.InputJsonValue,
           integrityHash: e.integrityHash,
           correctsEventId: e.correctsEventId,
         },
