@@ -41,12 +41,18 @@ export function loadMonorepoEnv(): void {
 loadMonorepoEnv();
 
 /**
- * Prefer DIRECT_URL (session :5432). Pooler :6543 is flaky from some networks.
- * Append a connect timeout so failures fail fast instead of hanging.
+ * URL selection:
+ * - Vercel serverless: prefer DATABASE_URL (pooler :6543) — session DIRECT_URL
+ *   often fails with P1001 / IPv6 from the edge network.
+ * - Local / CLI seed: prefer DIRECT_URL (session :5432) for reliable bulk writes.
+ * Append connect_timeout so failures fail fast instead of hanging.
  */
 function databaseUrl(): string | undefined {
   loadMonorepoEnv();
-  const raw = process.env.DIRECT_URL || process.env.DATABASE_URL;
+  const onVercel = process.env.VERCEL === "1";
+  const raw = onVercel
+    ? process.env.DATABASE_URL || process.env.DIRECT_URL
+    : process.env.DIRECT_URL || process.env.DATABASE_URL;
   if (!raw) return undefined;
   if (raw.includes("connect_timeout=")) return raw;
   return raw.includes("?")

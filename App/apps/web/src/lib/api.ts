@@ -21,9 +21,12 @@ export async function api<T>(
   };
   if (opts.sessionId) headers["x-session-id"] = opts.sessionId;
   const res = await fetch(`${API_URL}${path}`, { ...opts, headers });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error ?? data.invariantId ?? res.statusText);
+    const parts = [data.error ?? data.invariantId ?? res.statusText, data.hint]
+      .filter(Boolean)
+      .map(String);
+    throw new Error(parts.join(" — "));
   }
   return data as T;
 }

@@ -64,7 +64,10 @@ function dbUnavailable(message = "database not configured"): Response {
   return Response.json(
     {
       error: message,
-      hint: "Set DATABASE_URL and DIRECT_URL on the server (Vercel project env).",
+      hint: "Set DATABASE_URL and DIRECT_URL in Vercel → Project Settings → Environment Variables (Production + Preview), then Redeploy. Local App/.env is not uploaded to Vercel.",
+      vercel: process.env.VERCEL === "1",
+      hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+      hasDirectUrl: Boolean(process.env.DIRECT_URL),
     },
     { status: 503 },
   );
@@ -80,8 +83,11 @@ async function ensureWorld(): Promise<WorldState> {
 
   w.hydratePromise = (async () => {
     if (!isDatabaseConfigured()) {
-      w.ready = true;
-      return;
+      const err = new Error(
+        "database not configured: set DATABASE_URL and DIRECT_URL in Vercel Project → Settings → Environment Variables (Production), then redeploy",
+      );
+      (err as Error & { statusCode: number }).statusCode = 503;
+      throw err;
     }
     // Force Prisma client + env resolution before queries
     getPrisma();
@@ -290,6 +296,9 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
         service: "ankuaru-api",
         version: "0.1.0",
         database: isDatabaseConfigured(),
+        vercel: process.env.VERCEL === "1",
+        hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+        hasDirectUrl: Boolean(process.env.DIRECT_URL),
       });
     }
 
@@ -317,11 +326,30 @@ export async function handleApi(req: Request, pathParts: string[]): Promise<Resp
     }
 
     if (path === "v1/roles" && method === "GET") {
-      const actors = engine.getActors().filter(
+      const all = engine.getActors();
+      const actors = all.filter(
         (a) =>
           a.metadata.demoSelectable === "true" ||
           a.metadata.userOnboarded === "true",
       );
+      if (actors.length === 0) {
+        return json(
+          {
+            error:
+              all.length === 0
+                ? "No actors loaded from the database"
+                : "No demo-selectable actors in the loaded world",
+            hint:
+              all.length === 0
+                ? "On Vercel: set DATABASE_URL + DIRECT_URL (same as App/.env), redeploy, then run npm run db:seed against that Supabase project."
+                : "Re-run npm run db:seed so demoSelectable actors exist.",
+            database: isDatabaseConfigured(),
+            actorCount: all.length,
+            vercel: process.env.VERCEL === "1",
+          },
+          503,
+        );
+      }
       return json(
         actors.map((a) => ({
           actorId: a.actorId,

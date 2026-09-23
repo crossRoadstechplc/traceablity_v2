@@ -110,7 +110,9 @@ If Root Directory is instead `App`, Install = `npm install`, Build = `npm run ve
 | `DATABASE_URL` | Postgres pooler URL (Supabase `:6543?pgbouncer=true`) |
 | `DIRECT_URL` | Session/direct URL (Supabase `:5432`) for migrate + bulk seed/flush |
 
-Without these, mutating API routes return **503** with `database not configured`.
+Without these, `/v1/roles` and mutating routes return **503** with `database not configured`.
+
+**Important:** `App/.env` is local only — it is **not** deployed. Copy the same `DATABASE_URL` / `DIRECT_URL` values into the Vercel dashboard (Production + Preview), then **Redeploy**. Confirm with `GET /health` → `database: true`, `hasDatabaseUrl: true`.
 
 The live ledger **hydrates from Postgres** on cold start. Commands **upsert** changed rows (no full truncate). Seed only via `npm run db:seed`. Sessions are stored in `simulator_sessions` so bind survives idle/cold starts.
 

@@ -93,9 +93,9 @@ export default function HomePage() {
         if (cancelled) return;
         if (!list.length) {
           setError(
-            "No demo actors in the database. Seed once from the project root: npm run db:seed",
+            "No demo actors in the database. On Vercel set DATABASE_URL + DIRECT_URL, redeploy, then run npm run db:seed.",
           );
-          setStep("booting");
+          setStep("pick-role");
           return;
         }
         setRoles(list);
@@ -107,7 +107,7 @@ export default function HomePage() {
             ? e.message
             : "API unreachable — start the simulator with npm run dev",
         );
-        setStep("booting");
+        setStep("pick-role");
       }
     }
     void boot();
