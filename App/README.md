@@ -78,18 +78,21 @@ App/
 
 ## Deploy (Vercel — recommended)
 
-One project for UI + API.
+One project for UI + API (Next App Router).
 
 | Setting | Value |
 |--------|--------|
-| **Root Directory** | `App` |
+| **Root Directory** | `App/apps/web` |
 | **Framework** | Next.js |
-| **Install** | `npm install` |
-| **Build** | `npm run build:web` |
+| **Install Command** | `cd ../.. && npm install` |
+| **Build Command** | `cd ../.. && npm run vercel-build` |
+| **Node** | 20.x or 22.x |
 
-No `NEXT_PUBLIC_API_URL` needed (same origin).
+Leave `NEXT_PUBLIC_API_URL` unset (same-origin `/v1`).
 
-**Note:** the ledger is in-memory per server instance. On Vercel serverless, cold starts reset the seed — click **Seed world** again after idle. For a long-lived process, use `npm run start` on a Node host.
+If Root Directory is instead `App`, Install = `npm install`, Build = `npm run vercel-build`.
+
+**Note:** the ledger is in-memory per server instance. On Vercel serverless, cold starts reset the seed — the home page auto-seeds, or use **Reseed** in the nav. For a long-lived process, use `npm run start` on a Node host.
 
 ## Optional: standalone API (Render)
 
