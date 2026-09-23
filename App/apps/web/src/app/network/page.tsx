@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, X } from "lucide-react";
 import { AppShell, useSession } from "@/components/AppShell";
-import { api } from "@/lib/api";
+import { cachedApi, readCache } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ type Counts = {
   farmers: number;
   processingSites: number;
   aggregators: number;
+  exporters?: number;
 };
 
 type Node = {
@@ -114,6 +115,21 @@ const META_FIELDS: Record<string, Array<{ key: string; label: string }>> = {
     { key: "contactPhone", label: "Phone" },
     { key: "warehouse", label: "Warehouse" },
     { key: "yearsOperating", label: "Years operating" },
+    { key: "primaryDestinations", label: "Primary destinations" },
+    { key: "annualVolumeBags", label: "Annual volume (bags)" },
+    { key: "certifications", label: "Certifications" },
+    { key: "bank", label: "Bank" },
+    { key: "tin", label: "TIN" },
+  ],
+  importer: [
+    { key: "companyName", label: "Company" },
+    { key: "country", label: "Country" },
+    { key: "market", label: "Market" },
+    { key: "address", label: "Address" },
+    { key: "contactPerson", label: "Contact" },
+    { key: "contactPhone", label: "Phone" },
+    { key: "warehouse", label: "Warehouse" },
+    { key: "yearsOperating", label: "Years operating" },
   ],
 };
 
@@ -132,6 +148,7 @@ function coffeeForm(state: string): string {
 function countsSummary(c?: Counts): string {
   if (!c) return "";
   const parts: string[] = [];
+  if (c.exporters) parts.push(`${c.exporters} exporter${c.exporters === 1 ? "" : "s"}`);
   if (c.aggregators) parts.push(`${c.aggregators} aggregator${c.aggregators === 1 ? "" : "s"}`);
   if (c.collectors) parts.push(`${c.collectors} collector${c.collectors === 1 ? "" : "s"}`);
   if (c.processingSites)
@@ -165,25 +182,26 @@ function NetworkInner() {
 
   useEffect(() => {
     if (!session) return;
-    api<{ self: Node; children: Node[] }>("/v1/network", {
-      sessionId: session.sessionId,
-    })
-      .then((data) => {
-        setTree(data);
+    let expandedOnce = false;
+    cachedApi<{ self: Node; children: Node[] }>("/v1/network", session.sessionId, (data) => {
+      setTree(data);
+      if (!expandedOnce) {
+        expandedOnce = true;
         setExpanded(new Set(data.children.map((c) => c.actorId)));
-      })
-      .catch((e) => setError(String(e.message ?? e)));
+      }
+    }).catch((e) => setError(String(e.message ?? e)));
   }, [session]);
 
   const openProfile = async (actorId: string) => {
     if (!session) return;
-    setProfileLoading(true);
+    const path = `/v1/network/${actorId}`;
+    setProfileLoading(readCache(path, session.sessionId) === undefined);
     setError(null);
     try {
-      const p = await api<Profile>(`/v1/network/${actorId}`, {
-        sessionId: session.sessionId,
+      await cachedApi<Profile>(path, session.sessionId, (p) => {
+        setProfile(p);
+        setProfileLoading(false);
       });
-      setProfile(p);
     } catch (e) {
       setError(String((e as Error).message ?? e));
     } finally {

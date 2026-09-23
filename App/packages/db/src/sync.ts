@@ -187,6 +187,7 @@ async function upsertLots(lots: LotRecord[]) {
         inactiveEventId: row.inactiveEventId,
         inTransit: row.inTransit,
         moisturePct: row.moisturePct,
+        transactionChannel: row.transactionChannel,
       },
     });
   }
@@ -325,6 +326,13 @@ export async function syncWorldToDb(
         status: row.status,
       },
     });
+  }
+
+  const revokedUserIds = newEvents
+    .filter((e) => e.eventType === "user_revoked")
+    .map((e) => String(e.payload.userId));
+  for (const u of engine.getUsers().filter((x) => revokedUserIds.includes(x.userId))) {
+    await prisma.user.updateMany({ where: { id: u.userId }, data: { status: u.status } });
   }
 
   const existing = await prisma.event.findMany({

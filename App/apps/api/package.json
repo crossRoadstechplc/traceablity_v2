@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "node -e \"console.log('api: no compile step (runs via tsx)')\"",
     "start": "tsx src/index.ts",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

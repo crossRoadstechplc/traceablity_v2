@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "noEmit": true, "declaration": false, "declarationMap": false, "sourceMap": false },
+  "include": ["packages/schema/src/**/*", "packages/engine/src/**/*", "packages/seed/src/**/*", "packages/db/src/**/*"]
+}

@@ -325,6 +325,8 @@ export async function hydrateEngine(
 
   const engine = createEngine();
   engine.replaceWorld(world);
+  // Module state (issues, evidence, obligations, contracts, …) lives only in event payloads
+  engine.rebuildModuleProjections();
 
   return {
     engine,

@@ -12,6 +12,7 @@ import type {
   MovementRecord,
   UserRecord,
 } from "@ankuaru/engine";
+import { DEFAULT_FACILITY_CAPABILITIES } from "@ankuaru/schema";
 import { randomUUID } from "node:crypto";
 
 export function mapActors(actors: ActorRecord[]) {
@@ -37,18 +38,10 @@ export function mapCapacities(actors: ActorRecord[]) {
 
 export function mapFacilitiesFromActors(actors: ActorRecord[]) {
   return actors
-    .filter(
-      (a) =>
-        a.actorType === "washing_station" ||
-        a.actorType === "mill" ||
-        a.actorType === "akrabi",
-    )
+    .filter((a) => a.actorType === "washing_station" || a.actorType === "mill")
     .map((a) => ({
       actorId: a.actorId,
-      capabilities:
-        a.actorType === "mill"
-          ? ["dry_milling", "natural_processing"]
-          : ["wet_milling", "washed_processing"],
+      capabilities: [...DEFAULT_FACILITY_CAPABILITIES[a.actorType as "washing_station" | "mill"]],
     }));
 }
 
@@ -124,6 +117,7 @@ export function mapLots(lots: LotRecord[]) {
     inactiveEventId: l.inactiveEventId,
     inTransit: l.inTransit,
     moisturePct: l.moisturePct,
+    transactionChannel: (l.transactionChannel ?? null) as never,
   }));
 }
 

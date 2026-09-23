@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronDown, Scale, AlertTriangle } from "lucide-react";
 import { AppShell, useSession } from "@/components/AppShell";
-import { api } from "@/lib/api";
+import Link from "next/link";
+import { api, cachedApi, command, readCache } from "@/lib/api";
+import { Input } from "@/components/ui/input";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -64,9 +66,36 @@ type TraceNode = {
     contributionKg: number;
     proportion: number;
   }>;
+  eventId?: string;
+  eventType?: string;
+  processDetail?: {
+    inputKg: number;
+    productKg: number;
+    rejectKg: number;
+    lossKg: number;
+    lossCategory?: string;
+    byProductKg: number;
+    balanced: boolean;
+    facilityLabel?: string;
+    moisturePct?: number;
+  };
+  aggregateDetail?: {
+    combinedFrom: number;
+    provenance: Array<{ actorId: string; label: string; pct: number }>;
+  };
+};
+
+type LotIssue = {
+  issueId: string;
+  intervention: "BLOCK" | "WARN" | "FLAG";
+  lifecycle: string;
+  summary: string;
+  authorityTag?: string;
 };
 
 type LineageResp = {
+  issues?: LotIssue[];
+  compliance?: { status: string; frameworkCode: string; frameworkVersion?: string; market: string } | null;
   origins: string[];
   forward: string[];
   forwardLots?: Array<{
@@ -96,13 +125,23 @@ type Integrity = {
     rejectLoss: number;
   };
   discrepancies: { open: number };
+  chain?: { ok: boolean; checked: number; legacyUnverifiable: number; mismatches: number };
 };
 
 type ActivityEvent = {
   eventId: string;
   eventType: string;
   eventTime: string;
+  serverCommitTime?: string;
+  retrospective?: boolean;
+  sourceChannel?: string;
+  channelDetail?: string;
   actorLabel: string;
+  enteredBy?: string;
+  summary?: string;
+  correctsEventId?: string;
+  correctedBy?: boolean;
+  canCorrect?: boolean;
   affectedObjectIds: string[];
 };
 
@@ -129,29 +168,72 @@ function InspectorInner() {
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
   const [lineageBusy, setLineageBusy] = useState(false);
+  const [correcting, setCorrecting] = useState<string | null>(null);
+  const [correctReason, setCorrectReason] = useState("");
+  const [correctPayload, setCorrectPayload] = useState("{}");
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const loadActivity = () =>
+    session
+      ? api<{ events: ActivityEvent[] }>("/v1/inspector/activity", { sessionId: session.sessionId })
+          .then((a) => setActivity(a.events))
+          .catch(() => undefined)
+      : Promise.resolve();
+
+  async function submitCorrection(eventId: string) {
+    if (!session) return;
+    setError(null);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(correctPayload || "{}") as Record<string, unknown>;
+    } catch {
+      setError("Corrected values must be valid JSON, e.g. {\"receiverDeclaredKg\": 498}");
+      return;
+    }
+    try {
+      const r = await command(
+        "/v1/commands/correct",
+        { correctsEventId: eventId, correctedPayload: parsed, reason: correctReason },
+        { sessionId: session.sessionId, label: "Correction" },
+      );
+      setNotice(r.queued ? "Correction queued offline." : "Correction appended. The original event stays in the ledger.");
+      setCorrecting(null);
+      setCorrectReason("");
+      setCorrectPayload("{}");
+      await loadActivity();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   useEffect(() => {
     if (!session) return;
-    setBooting(true);
+    const sid = session.sessionId;
+    let picked = false;
+    const onLots = (l: { lots: Lot[]; preferredTraceLotId?: string }) => {
+      setLots(l.lots);
+      setBooting(false);
+      if (picked) return;
+      const requested = new URLSearchParams(window.location.search).get("lotId");
+      const pick =
+        (requested && l.lots.find((x) => x.lotId === requested)?.lotId) ||
+        (l.preferredTraceLotId && l.lots.find((x) => x.lotId === l.preferredTraceLotId)?.lotId) ||
+        l.lots.find((x) => x.status === "active")?.lotId ||
+        l.lots[0]?.lotId ||
+        "";
+      if (pick) {
+        picked = true;
+        setLotId(pick);
+      }
+    };
+    setBooting(!readCache("/v1/inspector/lots", sid));
     Promise.all([
-      api<{ lots: Lot[] }>("/v1/inspector/lots", { sessionId: session.sessionId }),
-      api<Integrity>("/v1/inspector/integrity", { sessionId: session.sessionId }),
-      api<{ events: ActivityEvent[] }>("/v1/inspector/activity", {
-        sessionId: session.sessionId,
-      }).catch(() => ({ events: [] as ActivityEvent[] })),
+      cachedApi("/v1/inspector/lots", sid, onLots),
+      cachedApi<Integrity>("/v1/inspector/integrity", sid, setIntegrity),
+      cachedApi<{ events: ActivityEvent[] }>("/v1/inspector/activity", sid, (a) => setActivity(a.events)).catch(
+        () => undefined,
+      ),
     ])
-      .then(([l, integ, act]) => {
-        setLots(l.lots);
-        setIntegrity(integ);
-        setActivity(act.events);
-        const preferred = localStorage.getItem("ankuaru_preferred_lot");
-        const pick =
-          (preferred && l.lots.find((x) => x.lotId === preferred)?.lotId) ||
-          l.lots.find((x) => x.status === "active")?.lotId ||
-          l.lots[0]?.lotId ||
-          "";
-        if (pick) setLotId(pick);
-      })
       .catch((e) => setError(String(e.message ?? e)))
       .finally(() => setBooting(false));
   }, [session]);
@@ -163,11 +245,11 @@ function InspectorInner() {
     setBreakdown(false);
     setExpanded(new Set());
     setMore(new Set());
-    setLineageBusy(true);
-    api<LineageResp>(`/v1/inspector/lineage?lotId=${lotId}`, {
-      sessionId: session.sessionId,
-    })
-      .then(setLineage)
+    const path = `/v1/inspector/lineage?lotId=${lotId}`;
+    const hasCache = readCache(path, session.sessionId) !== undefined;
+    if (!hasCache) setLineage(null);
+    setLineageBusy(!hasCache);
+    cachedApi<LineageResp>(path, session.sessionId, setLineage)
       .catch((e) => setError(String(e.message ?? e)))
       .finally(() => setLineageBusy(false));
   }, [session, lotId]);
@@ -214,6 +296,7 @@ function InspectorInner() {
       </div>
 
       {error && <Alert variant="destructive">{error}</Alert>}
+      {notice && <Alert>{notice}</Alert>}
 
       {booting ? (
         <InlineBusy label="Loading inspector lots, activity, and integrity…" />
@@ -299,18 +382,61 @@ function InspectorInner() {
               {activity.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No events yet.</p>
               ) : (
-                activity.slice(0, 50).map((e) => (
-                  <div
-                    key={e.eventId}
-                    className="flex flex-wrap items-baseline justify-between gap-2 rounded border bg-background/50 px-3 py-2 text-sm"
-                  >
-                    <div>
-                      <span className="font-medium">{formatState(e.eventType)}</span>
-                      <span className="text-muted-foreground"> · {e.actorLabel}</span>
+                activity.slice(0, 80).map((e) => (
+                  <div key={e.eventId} className="rounded border bg-background/50 px-3 py-2 text-sm">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <div>
+                        <span className="font-medium">{formatState(e.eventType)}</span>
+                        <span className="text-muted-foreground"> · {e.actorLabel}</span>
+                        {e.enteredBy && (
+                          <span className="text-muted-foreground"> · entered by {e.enteredBy}</span>
+                        )}
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {e.eventTime ? new Date(e.eventTime).toLocaleString() : "—"}
+                      </span>
                     </div>
-                    <span className="text-xs text-muted-foreground">
-                      {e.eventTime ? new Date(e.eventTime).toLocaleString() : "—"}
-                    </span>
+                    {e.summary && <p className="text-xs text-muted-foreground">{e.summary}</p>}
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      {e.retrospective && (
+                        <Badge variant="warn" title={`Committed ${e.serverCommitTime ? new Date(e.serverCommitTime).toLocaleString() : ""}`}>
+                          Retrospective · {formatState(e.sourceChannel ?? "")}
+                        </Badge>
+                      )}
+                      {e.channelDetail && <Badge variant="outline">{e.channelDetail.toUpperCase()}</Badge>}
+                      {e.correctedBy && <Badge variant="outline">Corrected later</Badge>}
+                      {e.canCorrect && !e.correctedBy && (
+                        <button
+                          type="button"
+                          className="text-xs text-sky-700 hover:underline"
+                          onClick={() => {
+                            setCorrecting(correcting === e.eventId ? null : e.eventId);
+                            setCorrectReason("");
+                            setCorrectPayload("{}");
+                          }}
+                        >
+                          {correcting === e.eventId ? "Cancel correction ▴" : "Correct this entry ▾"}
+                        </button>
+                      )}
+                      <span className="ml-auto font-mono text-[10px] text-muted-foreground">{e.eventId.slice(0, 8)}</span>
+                    </div>
+                    {correcting === e.eventId && (
+                      <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                        <Input
+                          placeholder="Reason (required)"
+                          value={correctReason}
+                          onChange={(ev) => setCorrectReason(ev.target.value)}
+                        />
+                        <Input
+                          placeholder='Corrected values as JSON, e.g. {"receiverDeclaredKg": 498}'
+                          value={correctPayload}
+                          onChange={(ev) => setCorrectPayload(ev.target.value)}
+                        />
+                        <Button size="sm" disabled={!correctReason.trim()} onClick={() => void submitCorrection(e.eventId)}>
+                          Append correction
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -355,9 +481,45 @@ function InspectorInner() {
                       {formatState(selected.processingRoute)} · {formatKg(selected.canonicalMassKg)} ·{" "}
                       {selected.status === "active" ? "Active" : "Closed"}
                     </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {lineage?.compliance && (
+                        <Badge variant={lineage.compliance.status === "READY" ? "success" : "warn"}>
+                          {lineage.compliance.frameworkCode} {lineage.compliance.frameworkVersion ?? ""} ·{" "}
+                          {lineage.compliance.status}
+                        </Badge>
+                      )}
+                      <Link
+                        href={`/records?tab=reports&lotId=${selected.lotId}`}
+                        className="text-xs text-sky-700 hover:underline"
+                      >
+                        Reports & audit package
+                      </Link>
+                    </div>
+                    {(lineage?.issues ?? []).filter((i) => i.lifecycle !== "RESOLVED" && i.intervention !== "FLAG").length > 0 && (
+                      <Alert
+                        className="mt-3"
+                        variant={
+                          lineage!.issues!.some((i) => i.lifecycle !== "RESOLVED" && i.intervention === "BLOCK")
+                            ? "destructive"
+                            : "warn"
+                        }
+                      >
+                        {lineage!.issues!
+                          .filter((i) => i.lifecycle !== "RESOLVED" && i.intervention !== "FLAG")
+                          .map((i) => (
+                            <div key={i.issueId}>
+                              <strong>{i.intervention}</strong> · {i.summary}
+                              {i.authorityTag && (
+                                <span className="text-xs opacity-70"> ({formatState(i.authorityTag)})</span>
+                              )}
+                            </div>
+                          ))}
+                      </Alert>
+                    )}
                   </div>
 
                   <Accordion
+                    key={lotId}
                     type="single"
                     collapsible
                     value={accordion}
@@ -413,7 +575,7 @@ function InspectorInner() {
                               size="sm"
                               onClick={() => {
                                 setBreakdown(true);
-                                setExpanded(new Set((lineage?.nodes ?? []).map((n) => n.lotId)));
+                                setExpanded(new Set([lotId]));
                               }}
                             >
                               View Breakdown
@@ -533,6 +695,20 @@ function InspectorInner() {
                 icon={AlertTriangle}
                 lines={[`${integrity.discrepancies.open} open shipment variance(s)`]}
               />
+              {integrity.chain && (
+                <MetricCard
+                  title="Hash chain"
+                  ok={integrity.chain.ok}
+                  icon={CheckCircle2}
+                  lines={[
+                    `${integrity.chain.checked} events verified`,
+                    `${integrity.chain.mismatches} mismatch(es)`,
+                    ...(integrity.chain.legacyUnverifiable
+                      ? [`${integrity.chain.legacyUnverifiable} legacy (pre-1.1) events not verifiable`]
+                      : []),
+                  ]}
+                />
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Loading integrity…</p>
@@ -645,14 +821,57 @@ function LineageSeed({
                 onMore(node.lotId);
               }}
             >
-              <ChevronDown
-                className={cn("h-3.5 w-3.5 transition-transform", !showMore && "-rotate-90")}
-              />
-              {showMore ? "Hide" : "More"}
+              {showMore ? "Hide ▴" : "More ▾"}
             </button>
 
             {showMore && (
               <div className="mt-2 space-y-1.5 rounded border border-border/70 bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
+                {node.eventId && (
+                  <DetailRow
+                    label="Event"
+                    value={`${formatState(node.eventType ?? "")} · ${node.eventId}`}
+                  />
+                )}
+                {node.processDetail && (
+                  <div className="rounded border bg-background/60 px-2 py-1.5">
+                    <div className="mb-1 font-medium text-foreground/80">
+                      Mass balance{node.processDetail.facilityLabel ? ` · ${node.processDetail.facilityLabel}` : ""}
+                    </div>
+                    <DetailRow label="Input" value={formatKg(node.processDetail.inputKg)} />
+                    <DetailRow label="Product" value={formatKg(node.processDetail.productKg)} />
+                    <DetailRow label="Reject" value={formatKg(node.processDetail.rejectKg)} />
+                    <DetailRow
+                      label="Loss"
+                      value={`${formatKg(node.processDetail.lossKg)}${
+                        node.processDetail.lossCategory ? ` (${formatState(node.processDetail.lossCategory)})` : ""
+                      }`}
+                    />
+                    {node.processDetail.byProductKg > 0 && (
+                      <DetailRow label="By-products" value={formatKg(node.processDetail.byProductKg)} />
+                    )}
+                    {node.processDetail.moisturePct != null && (
+                      <DetailRow label="Moisture" value={`${node.processDetail.moisturePct}%`} />
+                    )}
+                    <DetailRow
+                      label="Balance"
+                      value={node.processDetail.balanced ? "Balanced ✓" : "Does not balance"}
+                    />
+                  </div>
+                )}
+                {node.aggregateDetail && (
+                  <div className="rounded border bg-background/60 px-2 py-1.5">
+                    <div className="mb-1 font-medium text-foreground/80">
+                      Combined from {node.aggregateDetail.combinedFrom} lots
+                    </div>
+                    <ul className="space-y-0.5">
+                      {node.aggregateDetail.provenance.map((p) => (
+                        <li key={p.actorId}>
+                          {p.label} {p.pct.toFixed(1)}%
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <DetailRow label="Owner" value={node.ownerLabel} />
                 <DetailRow label="Custodian" value={node.custodianLabel} />
                 <DetailRow
@@ -702,9 +921,9 @@ function LineageSeed({
                   <div>
                     <div className="mb-1 font-medium text-foreground/80">Crop-year mix</div>
                     <ul className="space-y-0.5">
-                      {Object.entries(node.cropYearComposition).map(([y, kg]) => (
+                      {Object.entries(node.cropYearComposition).map(([y, share]) => (
                         <li key={y}>
-                          {y}: {formatKg(kg)}
+                          {y}: {(share * 100).toFixed(1)}% · {formatKg(share * node.massKg)}
                         </li>
                       ))}
                     </ul>

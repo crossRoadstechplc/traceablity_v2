@@ -8,7 +8,7 @@ import {
   hydrateEngine,
   syncWorldToDb,
 } from "@ankuaru/db";
-import type { CapacityCode, Session } from "@ankuaru/engine";
+import type { CapacityCode, LedgerEngine, Session } from "@ankuaru/engine";
 
 ensurePrismaEnginePath();
 
@@ -17,11 +17,17 @@ const CAP: Record<string, CapacityCode> = {
   collector: "Collector",
   akrabi: "Aggregator",
   exporter: "Exporter",
+  importer: "Importer",
 };
 
+let eng: LedgerEngine;
+
+/** Every command must trace to an identified User bound to the acting Actor (Module 01). */
 function sess(actorId: string, capacity: CapacityCode): Session {
+  const u = eng.createUser({ displayName: `E2E ${capacity} operator ${randomUUID().slice(0, 4)}` });
+  eng.bindUserToActor(u.userId, actorId);
   return {
-    userId: randomUUID(),
+    userId: u.userId,
     actorId,
     capacity,
     sourceChannel: "web",
@@ -31,7 +37,7 @@ function sess(actorId: string, capacity: CapacityCode): Session {
 async function main() {
   console.log("1) Hydrate from DB…");
   const h = await hydrateEngine();
-  const eng = h.engine;
+  eng = h.engine;
   console.log("   actors", h.actorCount, "events", h.eventCount);
 
   const demo = eng
@@ -70,7 +76,7 @@ async function main() {
   }
 
   console.log("3) Bind simulation (capacity must be on actor)…");
-  for (const type of ["exporter", "akrabi", "collector", "farmer"] as const) {
+  for (const type of ["importer", "exporter", "akrabi", "collector", "farmer"] as const) {
     const a = demo.find((x) => x.actorType === type && x.metadata.demoSelectable === "true");
     if (!a) {
       console.log("   skip", type, "(no demoSelectable)");
@@ -83,8 +89,31 @@ async function main() {
 
   let synced = eng.getEvents().length;
 
-  console.log("4) Onboard exporter → aggregator…");
-  const exporter = demo.find((a) => a.actorType === "exporter")!;
+  console.log("4a) Onboard importer → exporter…");
+  const importer = demo.find((a) => a.actorType === "importer");
+  if (!importer) throw new Error("no demo importer — re-run npm run db:seed");
+  const seededExporters = eng.networkTree(importer.actorId).filter((a) => a.actorType === "exporter");
+  if (seededExporters.length < 3) throw new Error(`expected ≥3 seeded exporters, got ${seededExporters.length}`);
+  const exporter = eng.onboardActor(sess(importer.actorId, "Importer"), {
+    actorType: "exporter",
+    displayName: `E2E Exporter ${Date.now()}`,
+    legalIdentityRef: `E2E-EXP-${Date.now()}`,
+    metadata: {
+      companyName: "E2E Export PLC",
+      exportLicense: "E2E-LIC",
+      contactPerson: "E2E",
+      userOnboarded: "true",
+      demoSelectable: "true",
+    },
+  });
+  let r0 = await syncWorldToDb(eng, {
+    preferredTraceLotId: h.preferredTraceLotId,
+    sinceEventIndex: synced,
+  });
+  synced = r0.nextEventIndex;
+  console.log("   onboarded", exporter.displayName, "eventsWritten", r0.eventsWritten);
+
+  console.log("4b) Onboard exporter → aggregator…");
   const agg = eng.onboardActor(sess(exporter.actorId, "Exporter"), {
     actorType: "akrabi",
     displayName: `E2E Aggregator ${Date.now()}`,
@@ -146,17 +175,23 @@ async function main() {
 
   console.log("7) Re-hydrate and verify actors + capacities…");
   const h2 = await hydrateEngine();
-  for (const id of [agg.actorId, col.actorId, farm.actorId, exporter.actorId]) {
+  for (const id of [exporter.actorId, agg.actorId, col.actorId, farm.actorId, importer.actorId]) {
     const a = h2.engine.getActors().find((x) => x.actorId === id);
     if (!a) throw new Error(`missing after hydrate ${id}`);
     if (a.capacities.length === 0) throw new Error(`no capacities after hydrate ${a.displayName}`);
     console.log("   ok", a.actorType, a.displayName, a.capacities.join(","));
   }
 
-  // Exporter must still bind
   const exp2 = h2.engine.getActors().find((a) => a.actorId === exporter.actorId)!;
   if (!exp2.capacities.includes("Exporter")) {
     throw new Error("Exporter lost Exporter capacity after onboard sync!");
+  }
+  if (exp2.sponsorActorId !== importer.actorId) {
+    throw new Error("Onboarded exporter is not sponsored by the importer after hydrate");
+  }
+  const imp2 = h2.engine.getActors().find((a) => a.actorId === importer.actorId)!;
+  if (!imp2.capacities.includes("Importer")) {
+    throw new Error("Importer lost Importer capacity after onboard sync!");
   }
 
   console.log("\nE2E PASSED");

@@ -380,14 +380,7 @@ async function buildServer() {
     processingState?: string;
   }) => engine.createIntakeLot(s, body as Parameters<typeof engine.createIntakeLot>[1]));
 
-  command("/v1/commands/send", (s, body: {
-    lotId: string;
-    toActorId: string;
-    senderDeclaredKg: number;
-    destinationLocationId?: string;
-  }) =>
-    engine.send(s, { ...body, requireShinto: false }),
-  );
+  command("/v1/commands/send", (s, body: Parameters<typeof engine.send>[1]) => engine.send(s, body));
 
   command("/v1/commands/receive", (s, body: {
     movementId: string;
@@ -475,7 +468,7 @@ async function buildServer() {
   app.get("/v1/notifications", async (req, reply) => {
     try {
       const s = await getSession(req);
-      return { notifications: engine.getNotifications(s.userId) };
+      return { notifications: engine.getNotifications(s.actorId) };
     } catch (err) {
       const m = mapError(err);
       return reply.code(m.statusCode).send(m.body);
@@ -503,8 +496,8 @@ async function buildServer() {
 
   app.post<{ Body: { lotId: string } }>("/v1/reports", async (req, reply) => {
     try {
-      await getSession(req);
-      const report = engine.generateReport(req.body.lotId);
+      const s = await getSession(req);
+      const report = engine.generateReport(s, req.body.lotId);
       if (isDatabaseConfigured()) await persistWorld();
       return { report, fingerprintOk: engine.verifyReportFingerprint(report.reportId) };
     } catch (err) {
