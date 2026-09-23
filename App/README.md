@@ -81,12 +81,11 @@ Root Directory must be **`App`**.
 | Setting | Value |
 |--------|--------|
 | **Root Directory** | `App` |
-| **Install Command** | `npm install` |
-| **Build Command** | `npm run build:api` |
+| **Build Command** | `npm install && npm run build:api` |
 | **Start Command** | `npm run start:api` |
 | **Node** | `22` (env `NODE_VERSION=22`) |
 
-`prisma` is a production dependency so it is available after install.
+Render often has **no separate Install field** — put `npm install` in the **Build Command**.
 
 Env vars: `DATABASE_URL`, `DIRECT_URL`, `WEB_ORIGIN` (Vercel URL), `JWT_SECRET`.
 
