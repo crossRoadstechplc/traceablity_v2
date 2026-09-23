@@ -169,6 +169,30 @@ function WorkspaceInner() {
   const role = session?.actor.capacity;
   const canOnboard = role === "Exporter" || role === "Aggregator" || role === "Collector";
   const canIntake = role === "Collector" || role === "Aggregator" || role === "Exporter";
+  const canOrigin = role === "Farmer";
+
+  const addLotLabel = canOrigin
+    ? "Add origin lot"
+    : role === "Exporter"
+      ? "Intake from aggregator"
+      : role === "Aggregator"
+        ? "Intake from collector"
+        : "Intake from farmer";
+
+  const onboardLabel =
+    role === "Exporter"
+      ? "Onboard aggregator"
+      : role === "Aggregator"
+        ? "Onboard collector"
+        : role === "Collector"
+          ? "Onboard farmer"
+          : "Onboard";
+
+  const openAddLot = () => {
+    setSelected(null);
+    setError(null);
+    setForm(canOrigin ? "origin" : "intake");
+  };
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -179,23 +203,32 @@ function WorkspaceInner() {
           </p>
           <h1 className="font-display text-2xl font-semibold">{role} workspace</h1>
           <p className="text-sm text-muted-foreground">
-            Inventory you hold, pending receipts, and lot actions.
+            {canOrigin
+              ? "Create harvest origin lots, then send to your collector."
+              : canIntake
+                ? "Intake from your sponsored suppliers, confirm receipts, and move coffee upstream."
+                : "Inventory you hold, pending receipts, and lot actions."}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => { setForm("origin"); setSelected(null); }}>
-            <PackagePlus className="h-4 w-4" />
-            Add a lot
-          </Button>
-          {canIntake && (
-            <Button size="sm" variant="outline" onClick={() => { setForm("intake"); setSelected(null); }}>
-              Record intake
+          {(canOrigin || canIntake) && (
+            <Button size="sm" onClick={openAddLot}>
+              <PackagePlus className="h-4 w-4" />
+              {addLotLabel}
             </Button>
           )}
           {canOnboard && (
-            <Button size="sm" variant="outline" onClick={() => { setForm("onboard"); setSelected(null); }}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setForm("onboard");
+                setSelected(null);
+                setError(null);
+              }}
+            >
               <UserPlus className="h-4 w-4" />
-              Onboard
+              {onboardLabel}
             </Button>
           )}
         </div>
@@ -253,7 +286,9 @@ function WorkspaceInner() {
             <CardContent className="space-y-2">
               {lots.length === 0 && (
                 <p className="py-6 text-center text-sm text-muted-foreground">
-                  No lots in custody. Add an origin lot or confirm a receipt.
+                  {canOrigin
+                    ? "No lots yet — use Add origin lot for a harvest."
+                    : "No lots in custody — use intake from a sponsored supplier, or confirm a receipt."}
                 </p>
               )}
               {lots.map((l) => (
@@ -292,8 +327,8 @@ function WorkspaceInner() {
           <CardHeader>
             <CardTitle className="text-base">
               {form === "origin" && "Create origin lot"}
-              {form === "intake" && "Record intake"}
-              {form === "onboard" && "Onboard party"}
+              {form === "intake" && addLotLabel}
+              {form === "onboard" && onboardLabel}
               {form === "send" && "Send lot"}
               {form === "split" && "Split lot"}
               {form === "combine" && "Combine lots"}
@@ -304,9 +339,22 @@ function WorkspaceInner() {
               {!form && !selected && "Lot detail"}
             </CardTitle>
             <CardDescription>
-              {!form && !selected && "Select a lot from inventory, or start Add a lot."}
+              {!form &&
+                !selected &&
+                (canOrigin
+                  ? "Select a lot from inventory, or Add origin lot."
+                  : "Select a lot from inventory, or intake from a sponsored supplier.")}
               {!form && selected && `${formatState(selected.processingRoute)} · ${selected.status}`}
-              {form === "intake" && "Digitize supplier coffee — custody stays with the farmer until send/receive."}
+              {form === "origin" &&
+                "Farmer harvest at the farm gate — you are the named origin farmer."}
+              {form === "intake" &&
+                "Pick a sponsored supplier. The farmer origin is taken from their network (no farmer picker)."}
+              {form === "onboard" &&
+                (role === "Exporter"
+                  ? "Add an aggregator (optional washing station or mill)."
+                  : role === "Aggregator"
+                    ? "Add a collector you sponsor."
+                    : "Add a farmer you sponsor.")}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -314,7 +362,7 @@ function WorkspaceInner() {
               <p className="text-sm text-muted-foreground">Waiting for selection…</p>
             )}
 
-            {form === "origin" && (
+            {form === "origin" && canOrigin && (
               <FormStack>
                 <Field label="Mass (kg)">
                   <Input value={massKg} onChange={(e) => setMassKg(e.target.value)} />
@@ -325,12 +373,20 @@ function WorkspaceInner() {
               </FormStack>
             )}
 
-            {form === "intake" && (
+            {form === "intake" && canIntake && (
               <FormStack>
-                <Field label="Supplier">
+                <Field
+                  label={
+                    role === "Exporter"
+                      ? "Supplier aggregator"
+                      : role === "Aggregator"
+                        ? "Supplier collector"
+                        : "Supplier farmer"
+                  }
+                >
                   <Select value={supplierId} onValueChange={setSupplierId}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select sponsored supplier" />
+                      <SelectValue placeholder="Select from your sponsored network" />
                     </SelectTrigger>
                     <SelectContent>
                       {intakeTargets.map((t) => (
@@ -343,27 +399,35 @@ function WorkspaceInner() {
                 </Field>
                 {intakeTargets.length === 0 && (
                   <p className="text-xs text-muted-foreground">
-                    No sponsored suppliers yet — onboard parties in My Network first.
+                    No sponsored suppliers yet — use Onboard (or Reseed) first.
                   </p>
                 )}
+                <Alert>
+                  You do not pick a farmer here. INV-10 resolves a named farmer from the
+                  supplier&apos;s sponsored tree automatically.
+                </Alert>
                 <Field label="Mass (kg)">
                   <Input value={massKg} onChange={(e) => setMassKg(e.target.value)} />
                 </Field>
                 <Button
                   disabled={busy || !supplierId}
                   onClick={() =>
-                    void run("/v1/commands/intake-lot", {
-                      supplierActorId: supplierId,
-                      massKg: Number(massKg),
-                    }, "Recording intake…")
+                    void run(
+                      "/v1/commands/intake-lot",
+                      {
+                        supplierActorId: supplierId,
+                        massKg: Number(massKg),
+                      },
+                      "Recording intake…",
+                    )
                   }
                 >
-                  Record intake
+                  Add lot from supplier
                 </Button>
               </FormStack>
             )}
 
-            {form === "onboard" && (
+            {form === "onboard" && canOnboard && (
               <FormStack>
                 <Field label="Display name">
                   <Input value={onboardName} onChange={(e) => setOnboardName(e.target.value)} />
@@ -471,7 +535,7 @@ function WorkspaceInner() {
                     }, "Onboarding party…");
                   }}
                 >
-                  Create party
+                  Create {role === "Exporter" ? "aggregator" : role === "Aggregator" ? "collector" : "farmer"}
                 </Button>
               </FormStack>
             )}
@@ -496,7 +560,9 @@ function WorkspaceInner() {
                     <ActionBtn icon={Send} label="Send" onClick={() => setForm("send")} />
                     <ActionBtn icon={Split} label="Split" onClick={() => setForm("split")} />
                     <ActionBtn icon={Combine} label="Combine" onClick={() => setForm("combine")} />
-                    <ActionBtn icon={Settings2} label="Process" onClick={() => setForm("process")} />
+                    {(role === "Aggregator" || role === "Exporter") && (
+                      <ActionBtn icon={Settings2} label="Process" onClick={() => setForm("process")} />
+                    )}
                     <ActionBtn icon={GitBranch} label="Transfer" onClick={() => setForm("transfer")} />
                     <ActionBtn icon={XCircle} label="Close" onClick={() => setForm("close")} />
                   </div>
