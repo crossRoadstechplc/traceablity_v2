@@ -87,7 +87,14 @@ function dbUnavailable(message = "database not configured"): Response {
 
 async function ensureWorld(): Promise<WorldState> {
   const w = world();
-  if (w.ready) return w;
+  if (w.ready && w.engine.getActors().length > 0) return w;
+  // A process that booted before the tables were seeded stays ready with an empty
+  // engine. If the database now has actors, drop that cache and hydrate.
+  if (w.ready && w.engine.getActors().length === 0 && (await dbHasSimulatorData())) {
+    w.ready = false;
+  } else if (w.ready) {
+    return w;
+  }
   if (w.hydratePromise) {
     await w.hydratePromise;
     return w;
